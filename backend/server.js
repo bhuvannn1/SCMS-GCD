@@ -14,16 +14,24 @@ const supabase = createClient(
 
 const app = express();
 
-// Build CORS whitelist from FRONTEND_URL (supports comma-separated values)
 const allowedOrigins = [
   "http://localhost:3000",
+  "https://scms-gcd.vercel.app",
   ...(process.env.FRONTEND_URL
     ? process.env.FRONTEND_URL.split(",").map((u) => u.trim())
     : [])
 ];
 
 const corsOptions = {
-  origin: allowedOrigins,
+  origin: function (origin, callback) {
+    if (!origin) return callback(null, true);
+    const isAllowed = allowedOrigins.includes(origin) || origin.endsWith(".vercel.app");
+    if (isAllowed) {
+      callback(null, true);
+    } else {
+      callback(new Error(`CORS policy blockage for origin: ${origin}`));
+    }
+  },
   credentials: true
 };
 
