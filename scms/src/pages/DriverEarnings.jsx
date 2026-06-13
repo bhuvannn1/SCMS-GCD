@@ -17,11 +17,11 @@ const DriverEarnings = () => {
         setEarning(null);
 
         try {
-            // Search specifically in driver_earnings table using earning_id
+            // Search specifically in driver_earnings table using id
             const { data, error: dbError } = await supabase
                 .from('driver_earnings')
                 .select('*')
-                .eq('earning_id', cleanId)
+                .eq('id', cleanId)
                 .maybeSingle();
 
             if (dbError) throw dbError;
@@ -97,7 +97,7 @@ const DriverEarnings = () => {
                             <div style={styles.amountWrapper}>
                                 <span style={styles.currencySymbol}>₹</span>
                                 <h2 style={styles.amountText}>
-                                    {Number(earning.total_earning).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                                    {Number(earning.amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                                 </h2>
                             </div>
                         </div>
@@ -105,7 +105,7 @@ const DriverEarnings = () => {
                         <div style={styles.infoGrid}>
                             <div style={styles.infoItem}>
                                 <label style={styles.infoLabel}>EARNING ID</label>
-                                <span style={styles.infoValue}>{earning.earning_id}</span>
+                                <span style={styles.infoValue}>{earning.id}</span>
                             </div>
                             <div style={styles.infoItem}>
                                 <label style={styles.infoLabel}>DRIVER ID</label>
@@ -114,7 +114,7 @@ const DriverEarnings = () => {
                             <div style={styles.infoItem}>
                                 <label style={styles.infoLabel}>DATE</label>
                                 <span style={styles.infoValue}>
-                                    {earning.created_at ? new Date(earning.created_at).toLocaleDateString() : 'N/A'}
+                                    {earning.earned_at ? new Date(earning.earned_at).toLocaleDateString() : 'N/A'}
                                 </span>
                             </div>
                             <div style={styles.infoItem}>
