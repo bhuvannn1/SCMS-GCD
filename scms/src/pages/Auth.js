@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import supabase from '../config/SupabaseClient'
 
+const API = process.env.REACT_APP_API_URL || "http://localhost:5000";
+
 const Auth = () => {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -23,30 +25,35 @@ const Auth = () => {
       })
       if (error) setError(error.message)
     } else {
-
-      // ✅ ADD HERE (inside else block)
       const roleMap = {
         seller: "owner",
         buyer: "buyer",
         driver: "driver"
       };
 
-      const { error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          data: {
-            role: roleMap[role]   // ✅ FIXED
-          }
+      try {
+        const res = await fetch(`${API}/api/admin/create-user`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            email,
+            password,
+            full_name: email.split('@')[0],
+            role: roleMap[role]
+          })
+        })
+        const data = await res.json()
+        if (!res.ok || data.error) {
+          setError(data.error || 'Registration failed')
+        } else {
+          setMessage('Registration successful! You can now log in.')
+          setIsLogin(true)
+          setPassword('')
         }
-      })
-
-      if (error) {
-        setError(error.message)
-      } else {
-        setMessage('Registration successful!')
-        setIsLogin(true)
-        setPassword('')
+      } catch (err) {
+        setError(err.message || 'An error occurred during registration')
       }
     }
 

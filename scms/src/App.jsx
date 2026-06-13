@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { useEffect, useState } from "react";
 import supabase from "./config/SupabaseClient";
 import "./App.css";
+import { ThemeProvider } from "./context/ThemeContext";
 
 
 import Auth from "./pages/Auth";
@@ -9,6 +10,7 @@ import Orders from "./pages/Orders";
 
 
 import Payment from "./pages/payment";
+import PaymentsDashboard from "./pages/PaymentsDashboard";
 
 import Sidebar from "./components/Sidebar";
 import BuyerSidebar from "./components/BuyerSidebar";
@@ -23,6 +25,9 @@ import Dispatch from "./pages/dispatch"
 import Driver from "./pages/drivers"
 import MapView from "./pages/mapview"
 import DriverEarnings from "./pages/DriverEarnings";
+import DriverHub from "./pages/DriverHub";
+import BuyerInvoices from "./pages/BuyerInvoices";
+import BuyerWarehouses from "./pages/BuyerWarehouses";
 import "leaflet/dist/leaflet.css"
 import useWarehouseMonitor from "./hooks/useWarehouseMonitor";
 import WarehouseAlertBanner from "./components/WarehouseAlertBanner";
@@ -52,19 +57,23 @@ function App() {
     return () => subscription.unsubscribe();
   }, []);
 
-  // ✅ Fetch role from profiles table
   useEffect(() => {
     if (session?.user) {
       supabase
         .from("profiles")
         .select("role")
         .eq("id", session.user.id)
-        .single()
+        .maybeSingle()
         .then(({ data, error }) => {
           if (error) {
             console.error("Error fetching role:", error);
-          } else {
+            const fallbackRole = session.user.user_metadata?.role || "buyer";
+            setRole(fallbackRole);
+          } else if (data) {
             setRole(data.role);
+          } else {
+            const fallbackRole = session.user.user_metadata?.role || "buyer";
+            setRole(fallbackRole);
           }
         });
     }
@@ -91,6 +100,8 @@ function App() {
               <Route path="/" element={<Navigate to="/orders" replace />} />
               <Route path="/orders" element={<Orders />} />
               <Route path="/payments" element={<Payment />} />
+              <Route path="/buyer/invoices" element={<BuyerInvoices />} />
+              <Route path="/buyer/warehouses" element={<BuyerWarehouses />} />
               <Route path="/map" element={<MapView />} />
               <Route path="/settings" element={<SettingsPage />} />
               <Route path="*" element={<Navigate to="/orders" replace />} />
@@ -107,12 +118,13 @@ function App() {
           <DriverSidebar />
           <main className="main-content">
             <Routes>
-              <Route path="/" element={<Navigate to="/orders" replace />} />
+              <Route path="/" element={<Navigate to="/driver/hub" replace />} />
               <Route path="/orders" element={<Orders />} />
               <Route path="/map" element={<MapView />} />
+              <Route path="/driver/hub" element={<DriverHub />} />
               <Route path="/driver/earnings" element={<DriverEarnings />} />
               <Route path="/settings" element={<SettingsPage />} />
-              <Route path="*" element={<Navigate to="/orders" replace />} />
+              <Route path="*" element={<Navigate to="/driver/hub" replace />} />
             </Routes>
           </main>
         </div>
@@ -124,39 +136,43 @@ function App() {
       <>
         <WarehouseAlertBanner />
         <div className="app-layout top-nav-layout">
-        <Sidebar />
-        <main className="main-content">
-          <Routes>
-            <Route path="/" element={<Navigate to="/orders" replace />} />
-            <Route path="/orders" element={<Orders />} />
-            <Route path="/analytics" element={<AnalyticsPage />} />
-            <Route path="/warehouse" element={<WarehousePage />} />
-            <Route path="/Fleet" element={<Fleet />} />
-            <Route path="/Dispatch" element={<Dispatch />} />
-            <Route path="/drivers" element={<Driver />} />
-            <Route path="/ai-assistance" element={<AIAssistancePage />} />
-            <Route path="/map" element={<MapView />} />
-            <Route path="/settings" element={<SettingsPage />} />
-            <Route path="*" element={<Navigate to="/orders" replace />} />
-          </Routes>
-        </main>
-      </div>
+          <Sidebar />
+          <main className="main-content">
+            <Routes>
+              <Route path="/" element={<Navigate to="/orders" replace />} />
+              <Route path="/orders" element={<Orders />} />
+              <Route path="/analytics" element={<AnalyticsPage />} />
+              <Route path="/warehouse" element={<WarehousePage />} />
+              <Route path="/Fleet" element={<Fleet />} />
+              <Route path="/Dispatch" element={<Dispatch />} />
+              <Route path="/drivers" element={<Driver />} />
+              <Route path="/ai-assistance" element={<AIAssistancePage />} />
+              <Route path="/map" element={<MapView />} />
+              <Route path="/payments-dashboard" element={<PaymentsDashboard />} />
+              <Route path="/payments" element={<Payment />} />
+              <Route path="/settings" element={<SettingsPage />} />
+              <Route path="*" element={<Navigate to="/orders" replace />} />
+            </Routes>
+          </main>
+        </div>
       </>
     );
   };
 
   return (
-    <BrowserRouter>
-      <div className="splash-overlay"></div>
-      {session && <img src="/IGNIS.png" alt="IGNIS Logo" className="splash-logo-global" />}
-      {session ? (
-        renderLayout()
-      ) : (
-        <Routes>
-          <Route path="*" element={<Auth />} />
-        </Routes>
-      )}
-    </BrowserRouter>
+    <ThemeProvider>
+      <BrowserRouter>
+        <div className="splash-overlay"></div>
+        {session && <img src="/IGNIS.png" alt="IGNIS Logo" className="splash-logo-global" />}
+        {session ? (
+          renderLayout()
+        ) : (
+          <Routes>
+            <Route path="*" element={<Auth />} />
+          </Routes>
+        )}
+      </BrowserRouter>
+    </ThemeProvider>
   );
 
 }
