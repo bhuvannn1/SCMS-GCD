@@ -102,6 +102,7 @@ function App() {
               <Route path="/payments" element={<Payment />} />
               <Route path="/buyer/invoices" element={<BuyerInvoices />} />
               <Route path="/buyer/warehouses" element={<BuyerWarehouses />} />
+              <Route path="/ai-assistance" element={<AIAssistancePage />} />
               <Route path="/map" element={<MapView />} />
               <Route path="/settings" element={<SettingsPage />} />
               <Route path="*" element={<Navigate to="/orders" replace />} />
@@ -123,6 +124,7 @@ function App() {
               <Route path="/map" element={<MapView />} />
               <Route path="/driver/hub" element={<DriverHub />} />
               <Route path="/driver/earnings" element={<DriverEarnings />} />
+              <Route path="/ai-assistance" element={<AIAssistancePage />} />
               <Route path="/settings" element={<SettingsPage />} />
               <Route path="*" element={<Navigate to="/driver/hub" replace />} />
             </Routes>

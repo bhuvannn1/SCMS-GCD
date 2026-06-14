@@ -45,7 +45,8 @@ const BuyerSidebar = () => {
     { to: "/buyer/invoices", label: 'Invoices' },
     { to: "/buyer/warehouses", label: 'My Warehouses' },
     { to: "/map", label: 'Tracking' },
-    { to: "/payments", label: 'Payments' }
+    { to: "/payments", label: 'Payments' },
+    { to: "/ai-assistance", label: 'AI Assistant' }
   ];
 
   return (

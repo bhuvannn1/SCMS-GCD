@@ -32,6 +32,8 @@ const RobotIcon = ({ size = 24 }) => (
     </svg>
 );
 
+const API = process.env.REACT_APP_API_URL || "http://localhost:5000";
+
 const AIAssistant = () => {
     const genAI = new GoogleGenerativeAI(
         process.env.REACT_APP_GEMINI_API_KEY
@@ -43,6 +45,7 @@ const AIAssistant = () => {
         { role: 'ai', text: 'Hello! I am your SCMS Co-Pilot. How can I help you manage your supply chain today?', timestamp: new Date() }
     ]);
     const [userId, setUserId] = useState(null);
+    const [userRole, setUserRole] = useState(null);
     const [currentSessionId, setCurrentSessionId] = useState(null);
     const [sessionsList, setSessionsList] = useState([]);
     const [isSidebarOpen, setIsSidebarOpen] = useState(true);
@@ -54,12 +57,33 @@ const AIAssistant = () => {
 
     const messagesEndRef = useRef(null);
 
-    const suggestions = [
-        "Warehouse status",
-        "Driver availability",
-        "Today's summary",
-        "Order overview"
-    ];
+    const suggestionsMap = {
+        seller: [
+            "Warehouse status",
+            "Driver availability",
+            "Today's summary",
+            "Order overview"
+        ],
+        owner: [
+            "Warehouse status",
+            "Driver availability",
+            "Today's summary",
+            "Order overview"
+        ],
+        buyer: [
+            "My purchases",
+            "Tracking details",
+            "How do I pay?",
+            "Add destination warehouse"
+        ],
+        driver: [
+            "Assigned loads",
+            "Earnings summary",
+            "How do I set status?",
+            "Upload delivery proof"
+        ]
+    };
+    const suggestions = suggestionsMap[userRole] || suggestionsMap.seller;
 
     const generateUUID = () => {
         if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -155,6 +179,15 @@ const AIAssistant = () => {
                 if (session?.user) {
                     const uId = session.user.id;
                     setUserId(uId);
+
+                    // Fetch user role
+                    const { data: profileData } = await supabase
+                        .from('profiles')
+                        .select('role')
+                        .eq('id', uId)
+                        .maybeSingle();
+                    const currentRole = profileData?.role || session.user.user_metadata?.role || 'seller';
+                    setUserRole(currentRole);
 
                     // Fetch history from Supabase
                     const { data: historyData, error } = await supabase
@@ -367,69 +400,198 @@ const AIAssistant = () => {
             // 2. Call detectIntent
             const intent = detectIntent(messageText);
 
-            // 3. Fetch context directly from Supabase
-            let contextData = [];
+            // 3. Fetch context directly from Supabase with role-based scoping
+            let contextData = {};
             try {
-                if (intent === "warehouses") {
-                    const { data } = await supabase.from("warehouses").select("*");
-                    contextData = { warehouses: data || [] };
-                } else if (intent === "orders") {
-                    const { data } = await supabase.from("Load").select("*").limit(30);
-                    contextData = { orders: data || [] };
-                } else if (intent === "logs") {
-                    const { data } = await supabase.from("warehouse_logs").select("*").limit(15);
-                    contextData = { logs: data || [] };
-                } else if (intent === "fleet") {
-                    const { data } = await supabase.from("Fleet").select("*");
-                    contextData = { fleet: data || [] };
-                } else if (intent === "drivers") {
-                    const { data } = await supabase.from("driver").select("*");
-                    const { data: eData } = await supabase.from("driver_earnings").select("*").limit(10);
-                    contextData = { drivers: data || [], driver_earnings_sample: eData || [] };
-                } else if (intent === "payments") {
-                    const { data } = await supabase.from("payments").select("*").limit(20);
-                    contextData = { payments: data || [] };
-                } else if (intent === "reroutes") {
-                    const { data } = await supabase.from("truck_reroutes").select("*");
-                    contextData = { reroutes: data || [] };
-                } else if (intent === "all") {
-                    // Fetch a summary of everything
-                    const [w, l, f, d, p] = await Promise.all([
-                        supabase.from("warehouses").select("*"),
-                        supabase.from("Load").select("*").limit(10),
-                        supabase.from("Fleet").select("*"),
-                        supabase.from("driver").select("*"),
-                        supabase.from("payments").select("*").limit(5)
-                    ]);
-                    contextData = {
-                        warehouses: w.data || [],
-                        recentOrders: l.data || [],
-                        fleetStatus: f.data || [],
-                        drivers: d.data || [],
-                        recentPayments: p.data || []
-                    };
+                if (userRole === "buyer") {
+                    // Fetch Buyer's orders
+                    const { data: buyerOrders } = await supabase.from("Load").select("*").eq("buyer_id", userId);
+                    const ordersList = buyerOrders || [];
+                    const fleetIds = ordersList.map(o => o.fleet_id).filter(Boolean);
+                    const orderIds = ordersList.map(o => o.load_id).filter(Boolean);
+
+                    if (intent === "orders") {
+                        contextData = { orders: ordersList };
+                    } else if (intent === "fleet") {
+                        let fleet = [];
+                        if (fleetIds.length > 0) {
+                            const { data } = await supabase.from("Fleet").select("*").in("id", fleetIds);
+                            fleet = data || [];
+                        }
+                        contextData = { fleet };
+                    } else if (intent === "warehouses") {
+                        let warehouses = [];
+                        try {
+                            const res = await fetch(`${API}/api/buyer-warehouses?buyer_id=${userId}`);
+                            if (res.ok) {
+                                const data = await res.json();
+                                warehouses = data.warehouses || [];
+                            }
+                        } catch (e) {
+                            console.error(e);
+                        }
+                        contextData = { warehouses };
+                    } else if (intent === "payments") {
+                        let payments = [];
+                        if (orderIds.length > 0) {
+                            const { data } = await supabase.from("payments").select("*").in("order_id", orderIds);
+                            payments = data || [];
+                        }
+                        contextData = { payments };
+                    } else if (intent === "reroutes") {
+                        let reroutes = [];
+                        if (fleetIds.length > 0) {
+                            const { data } = await supabase.from("truck_reroutes").select("*").in("fleet_id", fleetIds);
+                            reroutes = data || [];
+                        }
+                        contextData = { reroutes };
+                    } else {
+                        // Fetch all relevant buyer data for "all" or general queries
+                        let fleet = [], payments = [], warehouses = [];
+                        if (fleetIds.length > 0) {
+                            const { data } = await supabase.from("Fleet").select("*").in("id", fleetIds);
+                            fleet = data || [];
+                        }
+                        if (orderIds.length > 0) {
+                            const { data } = await supabase.from("payments").select("*").in("order_id", orderIds);
+                            payments = data || [];
+                        }
+                        try {
+                            const res = await fetch(`${API}/api/buyer-warehouses?buyer_id=${userId}`);
+                            if (res.ok) {
+                                const data = await res.json();
+                                warehouses = data.warehouses || [];
+                            }
+                        } catch (e) {}
+
+                        contextData = {
+                            orders: ordersList,
+                            fleet,
+                            payments,
+                            warehouses
+                        };
+                    }
+                } else if (userRole === "driver") {
+                    // Fetch Driver's assigned loads
+                    const { data: driverOrders } = await supabase.from("Load").select("*").eq("driver_id", userId);
+                    const ordersList = driverOrders || [];
+
+                    // Fetch Driver's assigned fleet/vehicle
+                    const { data: fleetRow } = await supabase.from("Fleet").select("*").eq("driver_id", userId).maybeSingle();
+
+                    if (intent === "orders") {
+                        contextData = { orders: ordersList };
+                    } else if (intent === "fleet") {
+                        contextData = { fleet: fleetRow ? [fleetRow] : [] };
+                    } else if (intent === "drivers") {
+                        const { data: profile } = await supabase.from("profiles").select("*").eq("id", userId).maybeSingle();
+                        const { data: driverMeta } = await supabase.from("driver").select("*").eq("id", userId).maybeSingle();
+                        const { data: earnings } = await supabase.from("driver_earnings").select("*").eq("driver_id", userId);
+                        contextData = {
+                            profile: profile || {},
+                            driver_metadata: driverMeta || {},
+                            earnings: earnings || []
+                        };
+                    } else if (intent === "reroutes") {
+                        let reroutes = [];
+                        if (fleetRow?.id) {
+                            const { data } = await supabase.from("truck_reroutes").select("*").eq("fleet_id", fleetRow.id);
+                            reroutes = data || [];
+                        }
+                        contextData = { reroutes };
+                    } else {
+                        // Fetch general summary of assigned items for "all"
+                        const { data: earnings } = await supabase.from("driver_earnings").select("*").eq("driver_id", userId);
+                        contextData = {
+                            orders: ordersList,
+                            fleet: fleetRow ? [fleetRow] : [],
+                            earnings: earnings || []
+                        };
+                    }
+                } else {
+                    // Seller / Owner (Original full access queries)
+                    if (intent === "warehouses") {
+                        const { data } = await supabase.from("warehouses").select("*");
+                        contextData = { warehouses: data || [] };
+                    } else if (intent === "orders") {
+                        const { data } = await supabase.from("Load").select("*").limit(30);
+                        contextData = { orders: data || [] };
+                    } else if (intent === "logs") {
+                        const { data } = await supabase.from("warehouse_logs").select("*").limit(15);
+                        contextData = { logs: data || [] };
+                    } else if (intent === "fleet") {
+                        const { data } = await supabase.from("Fleet").select("*");
+                        contextData = { fleet: data || [] };
+                    } else if (intent === "drivers") {
+                        const { data } = await supabase.from("driver").select("*");
+                        const { data: eData } = await supabase.from("driver_earnings").select("*").limit(10);
+                        contextData = { drivers: data || [], driver_earnings_sample: eData || [] };
+                    } else if (intent === "payments") {
+                        const { data } = await supabase.from("payments").select("*").limit(20);
+                        contextData = { payments: data || [] };
+                    } else if (intent === "reroutes") {
+                        const { data } = await supabase.from("truck_reroutes").select("*");
+                        contextData = { reroutes: data || [] };
+                    } else if (intent === "all") {
+                        const [w, l, f, d, p] = await Promise.all([
+                            supabase.from("warehouses").select("*"),
+                            supabase.from("Load").select("*").limit(10),
+                            supabase.from("Fleet").select("*"),
+                            supabase.from("driver").select("*"),
+                            supabase.from("payments").select("*").limit(5)
+                        ]);
+                        contextData = {
+                            warehouses: w.data || [],
+                            recentOrders: l.data || [],
+                            fleetStatus: f.data || [],
+                            drivers: d.data || [],
+                            recentPayments: p.data || []
+                        };
+                    }
                 }
             } catch (err) {
                 console.error("Supabase fetch error:", err);
                 contextData = { error: "Failed to fetch live data" };
             }
 
-            // 4. Build the Gemini prompt
+            // 4. Build the Gemini prompt with App Guidebook & Role Enforcement
+            const APP_GUIDE = `
+SCMS App Usage Guidebook:
+- Buyer Portal Features:
+  1. Purchases/Orders: View all your purchases in the "My Purchases" tab. For unpaid orders, you can click the orange "Pay Now" button to make a payment.
+  2. Invoices: Download invoices for paid orders from the "Invoices" tab.
+  3. Destination Warehouses: Add and manage the warehouses where you want goods delivered in the "My Warehouses" tab. Marking one as primary/default sets it as the preferred drop destination.
+  4. Live Tracking: Track the real-time location and optimized route of active delivery trucks in the "Tracking" tab.
+- Driver Portal Features:
+  1. Onboarding/Profile: Fill in your Driver Name, Phone, License, and Vehicle details in the "Driver Hub" to activate your account.
+  2. Toggle Active Status: Switch your status between "Available" (accepting loads), "On Trip", and "On Break" (inactive) by tapping the status button in the Driver Hub header.
+  3. Assigned Loads: View details of all orders assigned to you under the "Assigned Loads" tab.
+  4. Google Maps Routing: Tap the "Navigate" button next to any assigned load to open driving directions in Google Maps.
+  5. Upload Proof of Delivery: Upload proof files (images/documents) directly under the assigned loads tab once a delivery is completed.
+  6. Track Earnings: Check your earnings breakdown in the Driver Hub and "Earnings" tab.
+`;
+
             const prompt = `
    You are SCMS Co-Pilot, an AI assistant for a supply chain 
    management system in India.
    
-   Context data: ${JSON.stringify(contextData)}
+   The user's role is: ${userRole || 'buyer'}
+   
+   Context data (scoped specifically to this user): ${JSON.stringify(contextData)}
+   
+   App usage guidebook:
+   ${APP_GUIDE}
    
    User question: ${messageText}
    
    Rules:
-   - Give a direct one-line answer first
-   - Then bullet points with details
-   - End with one recommendation
-   - Keep under 150 words
-   - Only use data from context
-   - If no data say: I don't have enough data for that
+   - If they ask how to use the app or how to complete tasks, guide them clearly using the App usage guidebook.
+   - Give a direct one-line answer first.
+   - Then bullet points with details.
+   - End with one role-specific recommendation.
+   - Keep under 150 words.
+   - Only use data from context and the guidebook. Do not make up orders or fleets.
+   - If no relevant data exists in the context or guidebook, say: I don't have enough data for that.
    `;
 
             // 5. Call Gemini directly
