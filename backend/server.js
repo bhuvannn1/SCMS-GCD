@@ -802,6 +802,351 @@ app.get("/api/route/optimize", async (req, res) => {
   }
 });
 
+// ════════════════════════════════════════════════════════════════════════════
+// DRIVER FATIGUE & DUTY-TIME ENFORCEMENT ENDPOINTS
+// ════════════════════════════════════════════════════════════════════════════
+
+// ────────────────────────────────────────────────────────────────────────────
+// POST /api/driver/start-journey
+// Driver starts a trip. Creates a duty session and auto-generates checkpoints
+// along the route every ~160 km (4h @ 40 km/h).
+// Body: { driver_id, load_id, pickup, drop }
+// ────────────────────────────────────────────────────────────────────────────
+app.post("/api/driver/start-journey", async (req, res) => {
+  try {
+    const { driver_id, load_id, pickup, drop } = req.body;
+    if (!driver_id || !load_id) {
+      return res.status(400).json({ error: "driver_id and load_id are required" });
+    }
+
+    // 1. Check for an existing active session today to avoid duplicates
+    const today = new Date().toISOString().slice(0, 10);
+    const { data: existing } = await supabase
+      .from("driver_duty_sessions")
+      .select("id, status")
+      .eq("driver_id", driver_id)
+      .eq("load_id", load_id)
+      .eq("session_date", today)
+      .maybeSingle();
+
+    let sessionId;
+    if (existing) {
+      if (existing.status === "active" || existing.status === "resting") {
+        // Return existing session
+        sessionId = existing.id;
+      } else {
+        // Reset a completed/breached session for new day
+        const { data: reset, error: resetErr } = await supabase
+          .from("driver_duty_sessions")
+          .update({ status: "active", started_at: new Date().toISOString(), total_drive_minutes: 0 })
+          .eq("id", existing.id)
+          .select("id")
+          .single();
+        if (resetErr) throw resetErr;
+        sessionId = reset.id;
+      }
+    } else {
+      // 2. Create new duty session
+      const { data: session, error: sessErr } = await supabase
+        .from("driver_duty_sessions")
+        .insert({
+          driver_id,
+          load_id,
+          session_date: today,
+          started_at: new Date().toISOString(),
+          total_drive_minutes: 0,
+          status: "active"
+        })
+        .select("id")
+        .single();
+      if (sessErr) throw sessErr;
+      sessionId = session.id;
+    }
+
+    // 3. Generate checkpoints if pickup/drop provided and none exist
+    if (pickup && drop) {
+      const { count: existingCps } = await supabase
+        .from("driver_checkpoints")
+        .select("id", { count: "exact", head: true })
+        .eq("load_id", load_id)
+        .eq("driver_id", driver_id);
+
+      if (!existingCps || existingCps === 0) {
+        // Fetch route geometry from OSRM via existing route endpoint logic
+        const pickupCoords = await getCoords(pickup);
+        const dropCoords = await getCoords(drop);
+
+        if (pickupCoords && dropCoords) {
+          const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${pickupCoords[1]},${pickupCoords[0]};${dropCoords[1]},${dropCoords[0]}?overview=full&geometries=geojson&steps=false`;
+          let routeGeometry = null;
+          let totalDistanceKm = 0;
+          try {
+            const osrmRes = await fetch(osrmUrl);
+            const osrmData = await osrmRes.json();
+            if (osrmData.code === "Ok" && osrmData.routes?.length > 0) {
+              routeGeometry = osrmData.routes[0].geometry.coordinates; // [[lon,lat], ...]
+              totalDistanceKm = osrmData.routes[0].distance / 1000;
+            }
+          } catch (e) {
+            console.warn("OSRM checkpoint generation failed:", e.message);
+          }
+
+          // Place checkpoints every 160 km (4h driving), skip if route < 100km
+          const CHECKPOINT_INTERVAL_KM = 160;
+          const checkpointsToInsert = [];
+          if (totalDistanceKm >= 100) {
+            const numCheckpoints = Math.floor(totalDistanceKm / CHECKPOINT_INTERVAL_KM);
+            for (let i = 1; i <= numCheckpoints; i++) {
+              const fraction = (i * CHECKPOINT_INTERVAL_KM) / totalDistanceKm;
+              let cpLat = null, cpLng = null;
+              if (routeGeometry && routeGeometry.length > 0) {
+                const idx = Math.min(Math.floor(fraction * routeGeometry.length), routeGeometry.length - 1);
+                cpLng = routeGeometry[idx][0];
+                cpLat = routeGeometry[idx][1];
+              }
+              checkpointsToInsert.push({
+                load_id,
+                driver_id,
+                checkpoint_index: i,
+                label: `Rest Stop #${i}`,
+                approx_km: Math.round(i * CHECKPOINT_INTERVAL_KM),
+                approx_lat: cpLat,
+                approx_lng: cpLng,
+              });
+            }
+
+            if (checkpointsToInsert.length > 0) {
+              const { error: cpErr } = await supabase
+                .from("driver_checkpoints")
+                .insert(checkpointsToInsert);
+              if (cpErr) console.warn("Checkpoint insert warn:", cpErr.message);
+            }
+          }
+        }
+      }
+    }
+
+    // 4. Fetch checkpoints to return
+    const { data: checkpoints } = await supabase
+      .from("driver_checkpoints")
+      .select("*")
+      .eq("load_id", load_id)
+      .eq("driver_id", driver_id)
+      .order("checkpoint_index", { ascending: true });
+
+    // 5. Mark load as running
+    await supabase.from("Load").update({ status: "Running" }).eq("load_id", load_id);
+
+    res.json({ success: true, session_id: sessionId, checkpoints: checkpoints || [] });
+  } catch (err) {
+    console.error("START JOURNEY ERROR:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// GET /api/driver/duty-status
+// Returns today's duty session and checkpoints for a driver.
+// Query: driver_id, load_id (optional)
+// ────────────────────────────────────────────────────────────────────────────
+app.get("/api/driver/duty-status", async (req, res) => {
+  try {
+    const { driver_id, load_id } = req.query;
+    if (!driver_id) return res.status(400).json({ error: "driver_id is required" });
+
+    const today = new Date().toISOString().slice(0, 10);
+    let sessionQuery = supabase
+      .from("driver_duty_sessions")
+      .select("*")
+      .eq("driver_id", driver_id)
+      .eq("session_date", today)
+      .order("created_at", { ascending: false })
+      .limit(1);
+
+    if (load_id) sessionQuery = sessionQuery.eq("load_id", load_id);
+
+    const { data: sessions } = await sessionQuery;
+    const session = sessions?.[0] || null;
+
+    let checkpoints = [];
+    if (session?.load_id || load_id) {
+      const targetLoadId = load_id || session?.load_id;
+      const { data: cps } = await supabase
+        .from("driver_checkpoints")
+        .select("*")
+        .eq("load_id", targetLoadId)
+        .eq("driver_id", driver_id)
+        .order("checkpoint_index", { ascending: true });
+      checkpoints = cps || [];
+    }
+
+    res.json({ session, checkpoints });
+  } catch (err) {
+    console.error("DUTY STATUS ERROR:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// POST /api/driver/update-drive-time
+// Sync drive minutes from frontend timer. Flags status to 'resting' at 480m.
+// Body: { driver_id, load_id, total_drive_minutes }
+// ────────────────────────────────────────────────────────────────────────────
+app.post("/api/driver/update-drive-time", async (req, res) => {
+  try {
+    const { driver_id, load_id, total_drive_minutes } = req.body;
+    if (!driver_id || total_drive_minutes === undefined) {
+      return res.status(400).json({ error: "driver_id and total_drive_minutes are required" });
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+    const newStatus = total_drive_minutes >= 480 ? "resting" : "active";
+
+    let query = supabase
+      .from("driver_duty_sessions")
+      .update({ total_drive_minutes, status: newStatus })
+      .eq("driver_id", driver_id)
+      .eq("session_date", today);
+
+    if (load_id) query = query.eq("load_id", load_id);
+
+    const { error } = await query;
+    if (error) throw error;
+
+    res.json({ success: true, status: newStatus });
+  } catch (err) {
+    console.error("UPDATE DRIVE TIME ERROR:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// POST /api/driver/checkin-checkpoint
+// Driver checks in at a checkpoint (marks reached_at = now).
+// Body: { checkpoint_id }
+// ────────────────────────────────────────────────────────────────────────────
+app.post("/api/driver/checkin-checkpoint", async (req, res) => {
+  try {
+    const { checkpoint_id } = req.body;
+    if (!checkpoint_id) return res.status(400).json({ error: "checkpoint_id is required" });
+
+    const { error } = await supabase
+      .from("driver_checkpoints")
+      .update({ reached_at: new Date().toISOString() })
+      .eq("id", checkpoint_id);
+
+    if (error) throw error;
+    res.json({ success: true });
+  } catch (err) {
+    console.error("CHECKIN CHECKPOINT ERROR:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// POST /api/driver/report-breach
+// Logs a fatigue rule violation. Also marks session as 'breached'.
+// Body: { driver_id, load_id, seller_id, drive_minutes_at_breach, gps_lat?, gps_lng? }
+// ────────────────────────────────────────────────────────────────────────────
+app.post("/api/driver/report-breach", async (req, res) => {
+  try {
+    let { driver_id, load_id, seller_id, drive_minutes_at_breach, gps_lat, gps_lng } = req.body;
+    if (!driver_id) return res.status(400).json({ error: "driver_id is required" });
+
+    // Lookup seller_id if missing
+    if (!seller_id && load_id) {
+      const { data: loadData } = await supabase.from('Load').select('seller_id').eq('load_id', load_id).single();
+      if (loadData && loadData.seller_id) {
+        seller_id = loadData.seller_id;
+      }
+    }
+
+    // 1. Insert breach log
+    const { error: breachErr } = await supabase
+      .from("driver_breach_logs")
+      .insert({
+        driver_id,
+        load_id: load_id || null,
+        seller_id: seller_id || null,
+        drive_minutes_at_breach: drive_minutes_at_breach || 0,
+        gps_lat: gps_lat || null,
+        gps_lng: gps_lng || null,
+        penalty_amount: 500
+      });
+    if (breachErr) throw breachErr;
+
+    // 2. Mark session as breached
+    const today = new Date().toISOString().slice(0, 10);
+    await supabase
+      .from("driver_duty_sessions")
+      .update({ status: "breached" })
+      .eq("driver_id", driver_id)
+      .eq("session_date", today);
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("REPORT BREACH ERROR:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// GET /api/seller/breach-alerts
+// Returns unacknowledged breach alerts for loads owned by seller.
+// Query: seller_id
+// ────────────────────────────────────────────────────────────────────────────
+app.get("/api/seller/breach-alerts", async (req, res) => {
+  try {
+    const { seller_id } = req.query;
+    if (!seller_id) return res.status(400).json({ error: "seller_id is required" });
+
+    const { data, error } = await supabase
+      .from("driver_breach_logs")
+      .select(`
+        id,
+        breach_at,
+        drive_minutes_at_breach,
+        gps_lat,
+        gps_lng,
+        penalty_amount,
+        acknowledged_by_seller,
+        load_id,
+        driver:profiles!driver_id(full_name, email)
+      `)
+      .eq("seller_id", seller_id)
+      .order("breach_at", { ascending: false });
+
+    if (error) throw error;
+    res.json({ alerts: data || [] });
+  } catch (err) {
+    console.error("BREACH ALERTS ERROR:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// POST /api/seller/acknowledge-breach
+// Seller marks a breach alert as read.
+// Body: { breach_id }
+// ────────────────────────────────────────────────────────────────────────────
+app.post("/api/seller/acknowledge-breach", async (req, res) => {
+  try {
+    const { breach_id } = req.body;
+    if (!breach_id) return res.status(400).json({ error: "breach_id is required" });
+
+    const { error } = await supabase
+      .from("driver_breach_logs")
+      .update({ acknowledged_by_seller: true })
+      .eq("id", breach_id);
+
+    if (error) throw error;
+    res.json({ success: true });
+  } catch (err) {
+    console.error("ACKNOWLEDGE BREACH ERROR:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Start server ─────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));

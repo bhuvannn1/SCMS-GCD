@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Clock, CreditCard, DollarSign, X, CheckCircle, Search, FileText, Download, Package } from "lucide-react";
+import { Clock, CreditCard, IndianRupee, X, CheckCircle, Search, FileText, Download, Package } from "lucide-react";
 import axios from "axios";
 import supabase from "../config/SupabaseClient";
 
@@ -58,7 +58,7 @@ const generateInvoiceHTML = (payment, order = null) => {
       <div class="inv-meta">
         <div class="inv-num">INVOICE</div>
         <div class="inv-date">${date}</div>
-        <div style="margin-top:8px"><span class="status-badge">✓ PAID</span></div>
+        <div style="margin-top:8px"><span class="status-badge">PAID</span></div>
       </div>
     </div>
     <div class="inv-body">
@@ -251,11 +251,12 @@ const PaymentsDashboard = () => {
     });
 
   // ── Stats ──────────────────────────────────────────────────────────────────
-  const paidRows    = mergedRows.filter(r => r._status === "paid");
-  const pendingRows = mergedRows.filter(r => r._status === "pending");
-  const totalRevenue = paidRows.reduce((s, r) => s + (r._amount || 0), 0) / 100;
-  const paidCount    = paidRows.length;
-  const pendingCount = pendingRows.length;
+  const paidCount = mergedRows.filter(r => r._status === "paid").length;
+  const pendingCount = mergedRows.filter(r => r._status === "pending").length;
+
+  const totalRevenue = mergedRows
+    .filter(r => r._status === "paid")
+    .reduce((sum, r) => sum + (Number(r.assigned_amount) || 0), 0);
 
   // ── Filters ────────────────────────────────────────────────────────────────
   const filtered = mergedRows
@@ -309,7 +310,7 @@ const PaymentsDashboard = () => {
         setOrders(prev => prev.map(o =>
           o.load_id === loadId ? { ...o, assigned_amount: amount } : o
         ));
-        setAmountMsg(prev => ({ ...prev, [loadId]: { ok: true, msg: "✓ Amount set" } }));
+        setAmountMsg(prev => ({ ...prev, [loadId]: { ok: true, msg: "Saved successfully" } }));
         setTimeout(() => setAmountMsg(prev => ({ ...prev, [loadId]: null })), 3000);
       }
     } catch (err) {
@@ -355,7 +356,7 @@ const PaymentsDashboard = () => {
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "16px", marginBottom: "28px" }}>
         <SummaryCard
-          icon={<DollarSign size={24} style={{ color: "#f97316" }} />}
+          icon={<IndianRupee size={24} style={{ color: "#f97316" }} />}
           label="Total Revenue"
           value={`₹${totalRevenue.toLocaleString("en-IN", { minimumFractionDigits: 2 })}`}
           accent="#f97316"
@@ -538,7 +539,9 @@ const PaymentsDashboard = () => {
                       {/* Assign Amount — only editable for unpaid orders */}
                       <td style={{ ...tdStyle, minWidth: "180px" }}>
                         {isPaid ? (
-                          <span style={{ fontSize: "0.78rem", color: "#10b981", fontWeight: 600 }}>✓ Locked</span>
+                          <span style={{ fontSize: "0.78rem", color: "#10b981", fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                            <CheckCircle size={12}/> Locked
+                          </span>
                         ) : (
                           <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
                             <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>

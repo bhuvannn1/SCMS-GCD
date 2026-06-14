@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from "react"
-import { User, Phone, MapPin, Tag, CheckCircle, XCircle, Route, TrendingUp, Leaf, Loader2, Compass } from 'lucide-react';
+import { User, Phone, MapPin, Tag, CheckCircle, XCircle, Route, TrendingUp, Leaf, Loader2, Compass, AlertTriangle, ShieldAlert } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from "react-leaflet"
 import L from "leaflet"
 import supabase from "../config/SupabaseClient"
@@ -69,6 +69,34 @@ const createPinIcon = (color) => new L.divIcon({
 const pickupIcon = createPinIcon('#22c55e'); // Green
 const dropIcon = createPinIcon('#ef4444'); // Red
 
+// Breach marker icon (pulsing red alert)
+const createBreachIcon = () => new L.divIcon({
+    className: 'custom-breach-marker',
+    html: `
+        <div style="
+            background-color: #fef2f2;
+            border: 2.5px solid #ef4444;
+            border-radius: 50%;
+            width: 36px;
+            height: 36px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
+            animation: pulse-breach 1.5s infinite;
+        ">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"></path>
+                <path d="M12 9v4"></path>
+                <path d="M12 17h.01"></path>
+            </svg>
+        </div>
+    `,
+    iconSize: [36, 36],
+    iconAnchor: [18, 18],
+    popupAnchor: [0, -18]
+});
+
 // Component to dynamically fit route bounds
 const MapBoundsAdjuster = ({ coords }) => {
     const map = useMap();
@@ -85,6 +113,7 @@ const MapView = () => {
     const [fleet, setFleet] = useState([])
     const [activeLoads, setActiveLoads] = useState([])
     const [selectedLoad, setSelectedLoad] = useState(null)
+    const [breachAlerts, setBreachAlerts] = useState([])
     
     const [routeData, setRouteData] = useState(null)
     const [routeLoading, setRouteLoading] = useState(false)
@@ -205,9 +234,22 @@ const MapView = () => {
         setActiveLoads(data || []);
     }
 
+    const fetchBreachAlerts = async () => {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session?.user) return;
+        try {
+            const res = await fetch(`${API_BASE}/api/seller/breach-alerts?seller_id=${session.user.id}`);
+            const data = await res.json();
+            setBreachAlerts((data.alerts || []).filter(a => !a.acknowledged_by_seller));
+        } catch (e) {
+            console.warn('Map breach alerts fetch failed:', e.message);
+        }
+    }
+
     useEffect(() => {
         fetchFleetLocations()
         fetchActiveLoads()
+        fetchBreachAlerts()
         
         // Supabase Realtime WebSocket channel subscription
         const channel = supabase
@@ -242,6 +284,7 @@ const MapView = () => {
         const interval = setInterval(() => {
             fetchFleetLocations()
             fetchActiveLoads()
+            fetchBreachAlerts()
         }, 30000)
         
         return () => {
@@ -388,6 +431,40 @@ const MapView = () => {
                             {activeLoads.length} Running
                         </span>
                     </h3>
+
+                    {breachAlerts.length > 0 && !selectedLoad && (
+                        <div style={{
+                            padding: '12px', background: 'rgba(239,68,68,0.06)', 
+                            border: '1px solid rgba(239,68,68,0.2)', borderRadius: '12px',
+                            display: 'flex', flexDirection: 'column', gap: '8px',
+                            animation: 'pulse-bg 2s infinite'
+                        }}>
+                            <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#ef4444', display: 'flex', alignItems: 'center', gap: '6px', textTransform: 'uppercase' }}>
+                                <ShieldAlert size={14} /> Critical Alerts ({breachAlerts.length})
+                            </div>
+                            {breachAlerts.map(alert => (
+                                <div key={alert.id} style={{ fontSize: '0.75rem', color: '#7f1d1d', background: 'white', padding: '8px', borderRadius: '8px', border: '1px solid #fca5a5' }}>
+                                    <strong>{alert.driver?.full_name || 'Driver'}</strong> exceeded 8h limit.
+                                    <br />
+                                    Drove for {Math.floor(alert.drive_minutes_at_breach/60)}h {alert.drive_minutes_at_breach%60}m.
+                                    <div style={{ marginTop: '6px' }}>
+                                        <button 
+                                            onClick={async () => {
+                                                await fetch(`${API_BASE}/api/seller/acknowledge-breach`, {
+                                                    method: 'POST',
+                                                    headers: { 'Content-Type': 'application/json' },
+                                                    body: JSON.stringify({ breach_id: alert.id })
+                                                });
+                                                setBreachAlerts(prev => prev.filter(a => a.id !== alert.id));
+                                            }}
+                                            style={{ background: '#ef4444', color: 'white', border: 'none', padding: '4px 8px', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 'bold', cursor: 'pointer' }}>
+                                            Dismiss Alert
+                                        </button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
 
                     {selectedLoad ? (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
@@ -792,6 +869,38 @@ const MapView = () => {
                             );
                         })}
 
+                        {/* Breach Markers */}
+                        {breachAlerts.map(alert => {
+                            if (!alert.gps_lat || !alert.gps_lng) return null;
+                            return (
+                                <Marker 
+                                    key={alert.id} 
+                                    position={[alert.gps_lat, alert.gps_lng]} 
+                                    icon={createBreachIcon()}
+                                >
+                                    <Popup minWidth={220}>
+                                        <div style={{ fontFamily: "'Nunito', 'Inter', sans-serif" }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#ef4444', fontWeight: 900, fontSize: '0.9rem', marginBottom: '6px', borderBottom: '1px solid #fee2e2', paddingBottom: '6px' }}>
+                                                <AlertTriangle size={16} /> DRIVER FATIGUE BREACH
+                                            </div>
+                                            <div style={{ fontSize: '0.8rem', color: '#1e293b', marginBottom: '4px' }}>
+                                                <strong>Driver:</strong> {alert.driver?.full_name || 'Unknown'}
+                                            </div>
+                                            <div style={{ fontSize: '0.8rem', color: '#1e293b', marginBottom: '4px' }}>
+                                                <strong>Drive Time:</strong> {Math.floor(alert.drive_minutes_at_breach/60)}h {alert.drive_minutes_at_breach%60}m
+                                            </div>
+                                            <div style={{ fontSize: '0.75rem', color: '#64748b' }}>
+                                                Logged at: {new Date(alert.breach_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+                                            </div>
+                                            <div style={{ marginTop: '8px', background: '#fee2e2', color: '#ef4444', padding: '4px', borderRadius: '4px', textAlign: 'center', fontSize: '0.75rem', fontWeight: 700 }}>
+                                                Penalty Logged: ₹{alert.penalty_amount}
+                                            </div>
+                                        </div>
+                                    </Popup>
+                                </Marker>
+                            );
+                        })}
+
                     </MapContainer>
                 </div>
             </div>
@@ -801,6 +910,16 @@ const MapView = () => {
                     0% { transform: scale(0.9); opacity: 0.8; }
                     50% { transform: scale(1.2); opacity: 1; }
                     100% { transform: scale(0.9); opacity: 0.8; }
+                }
+                @keyframes pulse-breach {
+                    0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+                    70% { box-shadow: 0 0 0 15px rgba(239, 68, 68, 0); }
+                    100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+                }
+                @keyframes pulse-bg {
+                    0% { background: rgba(239,68,68,0.06); }
+                    50% { background: rgba(239,68,68,0.12); }
+                    100% { background: rgba(239,68,68,0.06); }
                 }
             `}</style>
         </div>

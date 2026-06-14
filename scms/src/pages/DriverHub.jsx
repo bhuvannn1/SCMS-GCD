@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { UserCheck, Truck, Coffee, DollarSign, CheckCircle, BarChart3, MapPin, Navigation, Clock, Camera, Leaf, Loader2, X, Compass } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { UserCheck, Truck, Coffee, IndianRupee, CheckCircle, BarChart3, MapPin, Navigation, Clock, Camera, Leaf, Loader2, X, Compass, Shield, AlertTriangle, Flag, Ban, XCircle, Check } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Polyline } from 'react-leaflet';
 import L from 'leaflet';
 import supabase from '../config/SupabaseClient';
@@ -278,6 +278,21 @@ const DriverHub = () => {
   const [activeRouteLoading, setActiveRouteLoading] = useState(false);
   const [activeRouteError, setActiveRouteError] = useState(null);
 
+  // ── Duty-Time / GPS Enforcement State ────────────────────────────────────
+  // const [dutySession, setDutySession] = useState(null);       // active DB session
+  const [checkpoints, setCheckpoints] = useState([]);          // route checkpoints
+  const [driveMinutes, setDriveMinutes] = useState(0);         // local timer (minutes)
+  const [dutyTimerActive, setDutyTimerActive] = useState(false);
+  const [journeyLoadId, setJourneyLoadId] = useState(null);    // which load timer is for
+  const [journeyStarting, setJourneyStarting] = useState(null); // load_id being started
+  const [checkingIn, setCheckingIn] = useState(null);          // checkpoint_id being checked in
+  const [breachModalOpen, setBreachModalOpen] = useState(false);
+  const [gpsCoords, setGpsCoords] = useState(null);            // { lat, lng }
+  const [gpsError, setGpsError] = useState(null);
+  const dutyTimerRef = useRef(null);
+  const gpsWatchRef = useRef(null);
+  const driveMinutesRef = useRef(0);                           // ref for use inside intervals
+
   const handleOpenRoute = async (trip) => {
     setActiveRouteTrip(trip);
     setActiveRouteLoading(true);
@@ -308,6 +323,112 @@ const DriverHub = () => {
       }
     }
     return null;
+  };
+
+  // ── Duty helpers ──────────────────────────────────────────────────────────
+  const fmtDutyTime = (mins) => {
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    return `${h}h ${String(m).padStart(2, '0')}m`;
+  };
+
+  const dutyColor = (mins) => {
+    if (mins >= 480) return '#ef4444';
+    if (mins >= 360) return '#f59e0b';
+    return '#10b981';
+  };
+
+  const dutyLabel = (mins) => {
+    if (mins >= 480) return <span style={{display:'flex', alignItems:'center', gap:'4px'}}><Ban size={14}/> REST REQUIRED</span>;
+    if (mins >= 360) return <span style={{display:'flex', alignItems:'center', gap:'4px'}}><AlertTriangle size={14}/> Approaching Limit</span>;
+    return <span style={{display:'flex', alignItems:'center', gap:'4px'}}><CheckCircle size={14}/> Under Limit</span>;
+  };
+
+  // Fetch or restore duty status for today
+  const fetchDutyStatus = useCallback(async (driverId, loadId) => {
+    try {
+      const params = new URLSearchParams({ driver_id: driverId });
+      if (loadId) params.append('load_id', loadId);
+      const res = await fetch(`${API}/api/driver/duty-status?${params}`);
+      const data = await res.json();
+      if (data.session) {
+        const saved = data.session.total_drive_minutes || 0;
+        setDriveMinutes(saved);
+        driveMinutesRef.current = saved;
+        setJourneyLoadId(data.session.load_id);
+        if (data.session.status === 'active') {
+          setDutyTimerActive(true);
+        }
+      }
+      if (data.checkpoints?.length > 0) {
+        setCheckpoints(data.checkpoints);
+      }
+    } catch (e) {
+      console.warn('fetchDutyStatus failed:', e.message);
+    }
+  }, []);
+
+  // Start journey: POST to backend, then start local timer
+  const handleStartJourney = async (trip) => {
+    if (!user) return;
+    if (driveMinutesRef.current >= 480) {
+      setBreachModalOpen(true);
+      // Log breach
+      await fetch(`${API}/api/driver/report-breach`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          driver_id: user.id,
+          load_id: trip.load_id,
+          seller_id: trip.seller_id || null,
+          drive_minutes_at_breach: driveMinutesRef.current,
+          gps_lat: gpsCoords?.lat || null,
+          gps_lng: gpsCoords?.lng || null,
+        })
+      }).catch(() => {});
+      return;
+    }
+    setJourneyStarting(trip.load_id);
+    try {
+      const res = await fetch(`${API}/api/driver/start-journey`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          driver_id: user.id,
+          load_id: trip.load_id,
+          pickup: trip.pickup,
+          drop: trip.drop,
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setJourneyLoadId(trip.load_id);
+      setCheckpoints(data.checkpoints || []);
+      setDutyTimerActive(true);
+    } catch (err) {
+      alert('Error starting journey: ' + err.message);
+    } finally {
+      setJourneyStarting(null);
+    }
+  };
+
+  // Check in at a checkpoint
+  const handleCheckIn = async (cpId) => {
+    setCheckingIn(cpId);
+    try {
+      await fetch(`${API}/api/driver/checkin-checkpoint`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ checkpoint_id: cpId })
+      });
+      setCheckpoints(prev => prev.map(cp =>
+        cp.id === cpId ? { ...cp, reached_at: new Date().toISOString() } : cp
+      ));
+    } catch (err) {
+      alert('Check-in failed: ' + err.message);
+    } finally {
+      setCheckingIn(null);
+    }
   };
 
   // ── Init ──────────────────────────────────────────────────────────────────
@@ -414,6 +535,103 @@ const DriverHub = () => {
     };
     init();
   }, [fetchDriverState]);
+
+  // ── GPS watchPosition effect ───────────────────────────────────────────────
+  useEffect(() => {
+    if (!user) return;
+    if (!navigator.geolocation) {
+      setGpsError('GPS not available on this device');
+      return;
+    }
+    let lastUpdateTime = 0;
+    const GPS_UPDATE_INTERVAL_MS = 30000; // update Fleet table every 30s
+
+    gpsWatchRef.current = navigator.geolocation.watchPosition(
+      async (pos) => {
+        const { latitude: lat, longitude: lng } = pos.coords;
+        setGpsCoords({ lat, lng });
+        setGpsError(null);
+        // Update vehicleLocation display string
+        setVehicleLocation(`${lat.toFixed(6)}, ${lng.toFixed(6)}`);
+
+        // Throttle DB updates to every 30 seconds
+        const now = Date.now();
+        if (now - lastUpdateTime > GPS_UPDATE_INTERVAL_MS) {
+          lastUpdateTime = now;
+          try {
+            await supabase
+              .from('Fleet')
+              .update({ location: `${lat.toFixed(6)}, ${lng.toFixed(6)}` })
+              .eq('driver_id', user.id);
+          } catch (e) { /* silent */ }
+
+          // Breach check: if duty timer active and over 480m, driver is moving illegally
+          if (dutyTimerActive && driveMinutesRef.current >= 480) {
+            setBreachModalOpen(true);
+            // Auto-report breach
+            fetch(`${API}/api/driver/report-breach`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                driver_id: user.id,
+                load_id: journeyLoadId,
+                drive_minutes_at_breach: driveMinutesRef.current,
+                gps_lat: lat,
+                gps_lng: lng,
+              })
+            }).catch(() => {});
+          }
+        }
+      },
+      (err) => setGpsError('GPS error: ' + err.message),
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 }
+    );
+
+    return () => {
+      if (gpsWatchRef.current !== null) {
+        navigator.geolocation.clearWatch(gpsWatchRef.current);
+      }
+    };
+  }, [user, dutyTimerActive, journeyLoadId]);
+
+  // ── Duty Timer effect ─────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!dutyTimerActive || !user) return;
+    // Increment drive minutes every 60 seconds
+    dutyTimerRef.current = setInterval(() => {
+      setDriveMinutes(prev => {
+        const next = prev + 1;
+        driveMinutesRef.current = next;
+        // Every 5 minutes sync to backend
+        if (next % 5 === 0) {
+          fetch(`${API}/api/driver/update-drive-time`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              driver_id: user.id,
+              load_id: journeyLoadId,
+              total_drive_minutes: next
+            })
+          }).catch(() => {});
+        }
+        // Stop timer at 480 minutes (8h)
+        if (next >= 480) {
+          clearInterval(dutyTimerRef.current);
+          setDutyTimerActive(false);
+        }
+        return next;
+      });
+    }, 60000); // every 60 seconds = 1 drive minute
+
+    return () => clearInterval(dutyTimerRef.current);
+  }, [dutyTimerActive, user, journeyLoadId]);
+
+  // ── Restore duty session on mount ────────────────────────────────────────
+  useEffect(() => {
+    if (user) {
+      fetchDutyStatus(user.id, null);
+    }
+  }, [user, fetchDutyStatus]);
 
   // ── Earnings chart data ───────────────────────────────────────────────────
   const buildChartData = () => {
@@ -702,6 +920,71 @@ const DriverHub = () => {
 
   return (
     <div className="page" style={{ maxWidth: '1200px', margin: '0 auto' }}>
+
+      {/* ── BREACH GUARD MODAL ────────────────────────────────────────────── */}
+      {breachModalOpen && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 9999,
+          background: 'rgba(0,0,0,0.7)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          backdropFilter: 'blur(6px)',
+          animation: 'fadeIn 0.2s ease-out',
+        }}>
+          <div style={{
+            background: '#fff',
+            borderRadius: '20px',
+            padding: '36px 40px',
+            maxWidth: '440px',
+            width: '90%',
+            textAlign: 'center',
+            border: '3px solid #ef4444',
+            boxShadow: '0 20px 60px rgba(239,68,68,0.35)',
+            animation: 'slideUp 0.3s ease-out',
+          }}>
+            <div style={{
+              width: '64px', height: '64px',
+              borderRadius: '50%',
+              background: 'rgba(239,68,68,0.1)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              margin: '0 auto 16px',
+            }}>
+              <AlertTriangle size={32} style={{ color: '#ef4444' }} />
+            </div>
+            <h2 style={{ margin: '0 0 8px', color: '#ef4444', fontWeight: 900, fontSize: '1.3rem' }}>
+              <Ban size={20} /> Driving Limit Breached!
+            </h2>
+            <p style={{ margin: '0 0 12px', color: '#64748b', fontSize: '0.9rem', lineHeight: 1.6 }}>
+              You have exceeded the <strong>8-hour daily driving limit</strong> as per India's Motor Vehicles Act.
+              Your trip has been <strong>flagged</strong> and the seller has been notified.
+            </p>
+            <div style={{
+              background: 'rgba(239,68,68,0.08)', borderRadius: '12px',
+              padding: '12px 16px', marginBottom: '20px',
+              border: '1px solid rgba(239,68,68,0.2)',
+            }}>
+              <span style={{ fontWeight: 800, color: '#ef4444', fontSize: '1.4rem' }}>
+                {fmtDutyTime(driveMinutes)}
+              </span>
+              <span style={{ color: '#94a3b8', fontSize: '0.85rem', marginLeft: '8px' }}>/ 8h 00m limit</span>
+            </div>
+            <p style={{ margin: '0 0 20px', color: '#64748b', fontSize: '0.82rem' }}>
+              ₹500 penalty has been logged. Please pull over and rest for 8 hours before resuming.
+            </p>
+            <button
+              onClick={() => setBreachModalOpen(false)}
+              style={{
+                width: '100%', padding: '12px', borderRadius: '10px',
+                border: 'none', background: '#ef4444',
+                color: 'white', fontWeight: 800, fontSize: '0.95rem',
+                cursor: 'pointer',
+              }}
+            >
+              I Understand — Pull Over Now
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* ── Page Header ──────────────────────────────────────────────────── */}
       <div style={{ marginBottom: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px' }}>
         <div>
@@ -756,9 +1039,9 @@ const DriverHub = () => {
           animation: 'slideUp 0.3s ease-out',
         }}>
           <div>
-            <h4 style={{ margin: '0 0 4px 0', color: '#ea580c', fontWeight: 800, fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <span>⚠️</span> Route Updated (Order Rerouted)
-            </h4>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 700, fontSize: '0.9rem', color: '#ea580c', marginBottom: '4px' }}>
+              <AlertTriangle size={18} /> Route Updated (Order Rerouted)
+            </div>
             <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--text-primary)' }}>
               Your destination has been changed from <strong>{alert.from_warehouse_name}</strong> to <strong>{alert.to_warehouse_name}</strong>.
             </p>
@@ -786,10 +1069,89 @@ const DriverHub = () => {
         </div>
       ))}
 
+      {/* ── DUTY TIME MONITOR CARD ──────────────────────────────────────── */}
+      <Card style={{ marginBottom: '18px', border: driveMinutes >= 480 ? '2px solid #ef4444' : driveMinutes >= 360 ? '2px solid #f59e0b' : '1px solid var(--border-color)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '16px' }}>
+          {/* Left: Title & GPS Status */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <div style={{
+              width: '44px', height: '44px', borderRadius: '12px',
+              background: `rgba(${driveMinutes >= 480 ? '239,68,68' : driveMinutes >= 360 ? '245,158,11' : '16,185,129'},0.12)`,
+              display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+            }}>
+              <Shield size={22} style={{ color: dutyColor(driveMinutes) }} />
+            </div>
+            <div>
+              <h3 style={{ margin: 0, fontWeight: 800, fontSize: '0.95rem', color: 'var(--text-primary)' }}>Duty Time Monitor</h3>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px' }}>
+                <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: gpsCoords ? '#10b981' : '#94a3b8', animation: gpsCoords ? 'pulse 2s infinite' : 'none' }} />
+                <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', fontWeight: 600 }}>
+                  {gpsCoords
+                    ? `GPS Active — ${gpsCoords.lat.toFixed(4)}, ${gpsCoords.lng.toFixed(4)}`
+                    : gpsError ? <><AlertTriangle size={12}/> {gpsError}</> : 'Acquiring GPS...'}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Center: Drive Time + Progress Bar */}
+          <div style={{ flex: 1, minWidth: '220px', maxWidth: '400px', position: 'relative' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+              <span style={{ fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-secondary)', letterSpacing: '0.5px' }}>Drive Time Today</span>
+              <span style={{ fontWeight: 900, fontSize: '1.1rem', color: dutyColor(driveMinutes) }}>
+                {fmtDutyTime(driveMinutes)} <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', fontWeight: 600 }}>/ 8h 00m</span>
+              </span>
+            </div>
+            <div style={{ width: '100%', height: '10px', background: 'var(--bg-primary,#f1f5f9)', borderRadius: '99px', overflow: 'hidden', position: 'relative' }}>
+              <div style={{
+                height: '100%',
+                width: `${Math.min((driveMinutes / 480) * 100, 100)}%`,
+                background: driveMinutes >= 480 ? '#ef4444' : driveMinutes >= 360
+                  ? 'linear-gradient(90deg,#f59e0b,#ea580c)'
+                  : 'linear-gradient(90deg,#10b981,#3b82f6)',
+                borderRadius: '99px',
+                transition: 'width 1s ease, background 0.5s ease',
+              }} />
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px' }}>
+              <span style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>0h</span>
+              <span style={{ fontSize: '0.65rem', color: '#f59e0b' }}>6h <AlertTriangle size={10} style={{ display: 'inline' }}/></span>
+              <span style={{ fontSize: '0.65rem', color: '#ef4444' }}>8h <Ban size={10} style={{ display: 'inline' }}/></span>
+            </div>
+          </div>
+
+          {/* Right: Status Label + Timer Indicator */}
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '6px' }}>
+            <div style={{
+              padding: '6px 14px', borderRadius: '20px', fontWeight: 800, fontSize: '0.82rem',
+              background: `rgba(${driveMinutes >= 480 ? '239,68,68' : driveMinutes >= 360 ? '245,158,11' : '16,185,129'},0.12)`,
+              color: dutyColor(driveMinutes),
+              border: `1px solid ${dutyColor(driveMinutes)}40`,
+            }}>
+              {dutyLabel(driveMinutes)}
+            </div>
+            {dutyTimerActive && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
+                <div style={{ width: '5px', height: '5px', borderRadius: '50%', background: '#f97316', animation: 'pulse 1s infinite' }} />
+                Timer Running
+              </div>
+            )}
+            {!dutyTimerActive && driveMinutes > 0 && (
+              <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Timer paused</span>
+            )}
+            {checkpoints.length > 0 && (
+              <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
+                {checkpoints.filter(c => c.reached_at).length}/{checkpoints.length} checkpoints reached
+              </span>
+            )}
+          </div>
+        </div>
+      </Card>
+
       {/* ── Row 1: Summary Stats + Performance Score ──────────────────────── */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr auto', gap: '14px', marginBottom: '18px' }}>
         {[
-          { label: 'Total Earned', value: `₹${fmt(totalEarned)}`, icon: <DollarSign size={20} style={{ color: '#f97316' }} />, color: '#f97316' },
+          { label: 'Total Earned', value: `₹${fmt(totalEarned)}`, icon: <IndianRupee size={20} style={{ color: '#f97316' }} />, color: '#f97316' },
           { label: 'Total Trips', value: totalTrips, icon: <Truck size={20} style={{ color: '#6366f1' }} />, color: '#6366f1' },
           { label: 'Completed', value: completedTrips, icon: <CheckCircle size={20} style={{ color: '#10b981' }} />, color: '#10b981' },
         ].map(({ label, value, icon, color }) => (
@@ -879,9 +1241,10 @@ const DriverHub = () => {
                         fontSize: '0.7rem', fontWeight: 700,
                         padding: '2px 9px', borderRadius: '20px',
                         background: isPaid ? 'rgba(16,185,129,0.12)' : 'rgba(249,115,22,0.1)',
-                        color: isPaid ? '#10b981' : '#f97316',
                       }}>
-                        {isPaid ? '✓ Paid' : trip.status || 'Active'}
+                        <span style={{ fontWeight: 600, color: isPaid ? '#10b981' : '#3b82f6', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          {isPaid ? <><CheckCircle size={12}/> Paid</> : trip.status || 'Active'}
+                        </span>
                       </span>
                     </div>
                     <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '4px' }}>
@@ -963,7 +1326,7 @@ const DriverHub = () => {
                       {/* Proof status message */}
                       {msg && (
                         <span style={{ fontSize: '0.7rem', color: msg.ok ? '#10b981' : '#ef4444', fontWeight: 600 }}>
-                          {msg.ok ? '✓' : '✗'} {msg.msg}
+                          {msg.ok ? <CheckCircle size={10} style={{ display: 'inline' }} /> : <AlertTriangle size={10} style={{ display: 'inline' }} />} {msg.msg}
                         </span>
                       )}
 
@@ -974,7 +1337,106 @@ const DriverHub = () => {
                           View Proof ↗
                         </a>
                       )}
+
+                      {/* ── START JOURNEY Button ─────────────────────────── */}
+                      {!['delivered','completed'].includes(trip.status) && (
+                        <button
+                          id={`start-journey-${trip.load_id}`}
+                          onClick={() => handleStartJourney(trip)}
+                          disabled={journeyStarting === trip.load_id || (journeyLoadId && journeyLoadId !== trip.load_id)}
+                          type="button"
+                          style={{
+                            fontSize: '0.72rem', fontWeight: 700,
+                            padding: '4px 10px', borderRadius: '6px',
+                            border: 'none',
+                            background: journeyLoadId === trip.load_id
+                              ? 'rgba(99,102,241,0.1)'
+                              : driveMinutes >= 480
+                              ? 'rgba(239,68,68,0.1)'
+                              : 'rgba(16,185,129,0.12)',
+                            color: journeyLoadId === trip.load_id ? '#6366f1' : driveMinutes >= 480 ? '#ef4444' : '#10b981',
+                            display: 'inline-flex', alignItems: 'center', gap: '4px',
+                            cursor: journeyStarting === trip.load_id ? 'wait' : 'pointer',
+                            opacity: (journeyLoadId && journeyLoadId !== trip.load_id) ? 0.4 : 1,
+                            transition: 'all 0.2s',
+                          }}
+                        >
+                          {journeyStarting === trip.load_id ? (
+                            <><Loader2 size={11} /> Starting...</>
+                          ) : journeyLoadId === trip.load_id ? (
+                            <><Flag size={11} /> Journey Active</>  
+                          ) : driveMinutes >= 480 ? (
+                            <><AlertTriangle size={11} /> Limit Reached</>
+                          ) : (
+                            <><Truck size={11} /> Start Journey</>
+                          )}
+                        </button>
+                      )}
                     </div>
+
+                    {/* ── CHECKPOINT PANEL (shown when this is the active journey) */}
+                    {journeyLoadId === trip.load_id && checkpoints.length > 0 && (
+                      <div style={{
+                        marginTop: '10px',
+                        padding: '10px 12px',
+                        background: 'rgba(99,102,241,0.04)',
+                        border: '1px solid rgba(99,102,241,0.15)',
+                        borderRadius: '10px',
+                      }}>
+                        <div style={{ fontSize: '0.7rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.5px', color: '#6366f1', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          <Flag size={10} /> Rest Checkpoints
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                          {checkpoints.map(cp => (
+                            <div key={cp.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flex: 1 }}>
+                                <div style={{
+                                  width: '20px', height: '20px', borderRadius: '50%', flexShrink: 0,
+                                  background: cp.reached_at ? 'rgba(16,185,129,0.15)' : 'rgba(99,102,241,0.1)',
+                                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                }}>
+                                  {cp.reached_at
+                                    ? <CheckCircle size={11} style={{ color: '#10b981' }} />
+                                    : <MapPin size={11} style={{ color: '#6366f1' }} />
+                                  }
+                                </div>
+                                <div>
+                                  <span style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-primary)' }}>{cp.label}</span>
+                                  <span style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginLeft: '4px' }}>~{cp.approx_km} km</span>
+                                </div>
+                              </div>
+                              {cp.reached_at ? (
+                                <span style={{ fontSize: '0.65rem', color: '#10b981', fontWeight: 700 }}>
+                                  <Check size={12}/> {new Date(cp.reached_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+                                </span>
+                              ) : (
+                                <button
+                                  onClick={() => handleCheckIn(cp.id)}
+                                  disabled={checkingIn === cp.id}
+                                  style={{
+                                    fontSize: '0.65rem', fontWeight: 700, padding: '3px 8px',
+                                    borderRadius: '5px', border: 'none', cursor: 'pointer',
+                                    background: '#6366f1', color: 'white',
+                                    opacity: checkingIn === cp.id ? 0.6 : 1,
+                                  }}
+                                >
+                                  {checkingIn === cp.id ? '...' : 'Check In'}
+                                </button>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Show checkpoint panel even when journey not started yet but checkpoints exist */}
+                    {journeyLoadId !== trip.load_id && checkpoints.length > 0 && (
+                      <div style={{ marginTop: '6px' }}>
+                        <span style={{ fontSize: '0.68rem', color: 'var(--text-secondary)' }}>
+                          <MapPin size={12}/> {checkpoints.filter(c => c.reached_at).length}/{checkpoints.length} rest stops reached on this route
+                        </span>
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -1085,7 +1547,7 @@ const DriverHub = () => {
               color: '#ef4444', borderRadius: '10px', fontSize: '0.85rem', fontWeight: 600,
               border: '1px solid rgba(239,68,68,0.2)'
             }}>
-              ✗ {earningsError}
+              <XCircle size={14} style={{ display: 'inline' }}/> {earningsError}
             </div>
           )}
 
@@ -1104,7 +1566,7 @@ const DriverHub = () => {
                 ['Earning ID', earning.id],
                 ['Driver ID', earning.driver_id || '—'],
                 ['Date', earning.earned_at ? new Date(earning.earned_at).toLocaleDateString('en-IN') : 'N/A'],
-                ['Status', 'Paid ✓'],
+                ['Status', 'Paid (Done)'],
               ].map(([lbl, val]) => (
                 <div key={lbl} style={{ padding: '8px 0' }}>
                   <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '4px' }}>{lbl}</div>
@@ -1171,7 +1633,7 @@ const DriverHub = () => {
 
             {activeRouteError && (
               <div style={{ padding: '16px', background: '#fee2e2', color: '#ef4444', borderRadius: '14px', fontSize: '0.85rem', fontWeight: 600 }}>
-                ✗ Error calculating route: {activeRouteError}
+                <XCircle size={14}/> Error calculating route: {activeRouteError}
               </div>
             )}
 
