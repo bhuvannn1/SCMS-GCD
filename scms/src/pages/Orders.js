@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from "react"
-import { Search, ArrowUpDown, Filter, Lock, CheckCircle } from 'lucide-react';
+import { Search, ArrowUpDown, Filter, Lock, CheckCircle, Package, MapPin, Home, Truck, ChevronDown, ChevronUp } from 'lucide-react';
 import { useNavigate } from "react-router-dom"
 import supabase from "../config/SupabaseClient"
 import useClickOutside from "../hooks/useClickOutside"
@@ -50,6 +50,35 @@ const dropIcon = createPinIcon('#ef4444'); // Red
 const Orders = () => {
   const [fetchError, setFetchError] = useState(null)
   const [loadData, setLoadData] = useState(null)
+
+  // Card toggle state
+  const [expandedCards, setExpandedCards] = useState(new Set())
+  
+  const toggleCardExpansion = (id) => {
+    setExpandedCards(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }
+
+  const getCityFromLocation = (locationStr) => {
+    if (!locationStr || locationStr === 'N/A') return 'N/A';
+    let part = locationStr;
+    if (locationStr.includes('–')) {
+      part = locationStr.split('–')[1];
+    } else if (locationStr.includes('-')) {
+      part = locationStr.split('-')[1];
+    }
+    if (part.includes(',')) {
+      part = part.split(',')[0];
+    }
+    return part.trim().toUpperCase();
+  };
   const [fleetData, setFleetData] = useState([])
   const [userRole, setUserRole] = useState(null)
   const navigate = useNavigate()
@@ -66,10 +95,39 @@ const Orders = () => {
   const [driverId, setDriverId] = useState('')
   const [fleetId, setFleetId] = useState('')
   const [assignedAmount, setAssignedAmount] = useState(0)
+  const [buyerAmount, setBuyerAmount] = useState(0)
   const [orderStatus, setOrderStatus] = useState('Pending')
   const [paymentStatus, setPaymentStatus] = useState('unpaid')
   const [addLoading, setAddLoading] = useState(false)
   const [addError, setAddError] = useState(null)
+
+  // Edit Order State
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false)
+  const [editOrderId, setEditOrderId] = useState('')
+  const [editCustomer, setEditCustomer] = useState('')
+  const [editPickup, setEditPickup] = useState('')
+  const [editDrop, setEditDrop] = useState('')
+  const [editEta, setEditEta] = useState('')
+  const [editBuyerId, setEditBuyerId] = useState('')
+  const [editSellerId, setEditSellerId] = useState('')
+  const [editDriverId, setEditDriverId] = useState('')
+  const [editFleetId, setEditFleetId] = useState('')
+  const [editAssignedAmount, setEditAssignedAmount] = useState(0)
+  const [editBuyerAmount, setEditBuyerAmount] = useState(0)
+  const [editOrderStatus, setEditOrderStatus] = useState('Pending')
+  const [editPaymentStatus, setEditPaymentStatus] = useState('unpaid')
+  const [editLoading, setEditLoading] = useState(false)
+  const [editError, setEditError] = useState(null)
+  const [editBuyerDestinations, setEditBuyerDestinations] = useState([])
+  const [editDropMode, setEditDropMode] = useState('custom')
+  const [editRoutingData, setEditRoutingData] = useState(null)
+  const [editRoutingLoading, setEditRoutingLoading] = useState(false)
+  const [editRoutingError, setEditRoutingError] = useState(null)
+  const [systemWarehouses, setSystemWarehouses] = useState([])
+  const [isPickupDropdownOpen, setIsPickupDropdownOpen] = useState(false)
+  const [isDropDropdownOpen, setIsDropDropdownOpen] = useState(false)
+  const [isEditPickupDropdownOpen, setIsEditPickupDropdownOpen] = useState(false)
+  const [isEditDropDropdownOpen, setIsEditDropDropdownOpen] = useState(false)
 
   // Lists for dropdowns
   const [buyersList, setBuyersList] = useState([])
@@ -117,6 +175,39 @@ const Orders = () => {
     }
   };
 
+  const handleCalculateEditRoute = async () => {
+    if (!editPickup || !editDrop) {
+      setEditRoutingError("Please enter both Pickup and Drop locations first.");
+      return;
+    }
+    setEditRoutingLoading(true);
+    setEditRoutingError(null);
+    setEditRoutingData(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/route/optimize?pickup=${encodeURIComponent(editPickup)}&drop=${encodeURIComponent(editDrop)}`);
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to calculate route");
+      }
+      setEditRoutingData(data);
+      // Auto-set ETA if empty or default
+      if (data.optimized?.duration_sec) {
+        const hours = Math.round(data.optimized.duration_sec / 3600);
+        setEditEta(`${hours} Hours`);
+      }
+      // Auto-suggest price if 0 or empty
+      if (data.optimized?.distance_km && (!editAssignedAmount || Number(editAssignedAmount) === 0)) {
+        // Base rate ₹35/km plus base charge of ₹2000
+        const suggestedPrice = Math.round(data.optimized.distance_km * 35 + 2000);
+        setEditAssignedAmount(suggestedPrice);
+      }
+    } catch (err) {
+      setEditRoutingError(err.message);
+    } finally {
+      setEditRoutingLoading(false);
+    }
+  };
+
   // Converts ASCII digits in a string to the active locale's numeral script
   const localeDigits = (str) => {
     return str;
@@ -133,9 +224,45 @@ const Orders = () => {
 
   const filterRef = useRef(null)
   const sortRef = useRef(null)
+  const pickupDropdownRef = useRef(null)
+  const dropDropdownRef = useRef(null)
+  const editPickupDropdownRef = useRef(null)
+  const editDropDropdownRef = useRef(null)
 
   useClickOutside(filterRef, () => setIsFilterOpen(false))
   useClickOutside(sortRef, () => setIsSortOpen(false))
+  useClickOutside(pickupDropdownRef, () => setIsPickupDropdownOpen(false))
+  useClickOutside(dropDropdownRef, () => setIsDropDropdownOpen(false))
+  useClickOutside(editPickupDropdownRef, () => setIsEditPickupDropdownOpen(false))
+  useClickOutside(editDropDropdownRef, () => setIsEditDropDropdownOpen(false))
+
+  const getSearchQuery = (val) => {
+    if (!val) return '';
+    if (val.includes(' – ')) {
+      return val.split(' – ')[0];
+    }
+    return val;
+  };
+
+  const filteredPickups = systemWarehouses.filter(w => {
+    const query = getSearchQuery(pickup).toLowerCase();
+    return !query || w.name.toLowerCase().startsWith(query);
+  });
+
+  const filteredDrops = systemWarehouses.filter(w => {
+    const query = getSearchQuery(drop).toLowerCase();
+    return !query || w.name.toLowerCase().startsWith(query);
+  });
+
+  const filteredEditPickups = systemWarehouses.filter(w => {
+    const query = getSearchQuery(editPickup).toLowerCase();
+    return !query || w.name.toLowerCase().startsWith(query);
+  });
+
+  const filteredEditDrops = systemWarehouses.filter(w => {
+    const query = getSearchQuery(editDrop).toLowerCase();
+    return !query || w.name.toLowerCase().startsWith(query);
+  });
 
   const activeFilterCount = (statusFilter !== 'all' ? 1 : 0) + (driverFilter !== 'all' ? 1 : 0);
   const hasActiveFilters = activeFilterCount > 0 || searchQuery !== '' || sortBy !== 'customer' || sortOrder !== 'asc';
@@ -172,7 +299,14 @@ const Orders = () => {
       `)
 
     if (currentRole === 'driver') {
-      query = query.eq('driver_id', userId)
+      query = query
+        .eq('driver_id', userId)
+        .neq('status', 'Delivered')
+        .neq('status', 'delivered')
+        .neq('status', 'Completed')
+        .neq('status', 'completed')
+        .neq('status', 'Cancelled')
+        .neq('status', 'cancelled');
     } else if (currentRole === 'buyer') {
       query = query.eq('buyer_id', userId)
     }
@@ -207,15 +341,34 @@ const Orders = () => {
       setDriversList(profiles.filter(p => p.role === 'driver'))
     }
 
+    // Fetch system warehouses
+    const { data: whs } = await supabase
+      .from('warehouses')
+      .select('id, name')
+      .order('name', { ascending: true })
+    setSystemWarehouses(whs || [])
+
     // Fetch payments to map payment_status dynamically since payment_status column does not exist on Load table.
     const { data: payments } = await supabase.from('payments').select('*')
     const paymentsMap = payments || []
 
     const mappedLoads = (loads || []).map(load => {
-      const hasPayment = paymentsMap.some(p => p.order_id === load.load_id && p.status === 'success');
+      const loadPayments = paymentsMap.filter(p => p.order_id === load.load_id && p.status === 'success');
+      let totalPaidInINR = loadPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0) / 100;
+
+      if (totalPaidInINR === 0 && load.payment_status === 'paid') {
+        totalPaidInINR = Number(load.buyer_amount) || 0;
+      }
+
+      const balanceDue = Math.max(0, (Number(load.buyer_amount) || 0) - totalPaidInINR);
+      const isFullyPaid = balanceDue <= 0 && (totalPaidInINR > 0 || load.payment_status === 'paid');
+      const isPartiallyPaid = totalPaidInINR > 0 && balanceDue > 0;
+
       return {
         ...load,
-        payment_status: (load.payment_status === 'paid' || hasPayment) ? 'paid' : 'unpaid',
+        total_paid: totalPaidInINR,
+        balance_due: balanceDue,
+        payment_status: isFullyPaid ? 'paid' : isPartiallyPaid ? 'partial' : 'unpaid',
         assigned_driver: load.driver?.full_name || 'None',
         vehicleId: load.fleet?.vehicle_number || 'None'
       }
@@ -339,8 +492,11 @@ const Orders = () => {
     setDriverId('');
     setFleetId('');
     setAssignedAmount(0);
+    setBuyerAmount(0);
     setRoutingData(null);
     setRoutingError(null);
+    setIsPickupDropdownOpen(false);
+    setIsDropDropdownOpen(false);
   };
 
   const handleAddOrderSubmit = async (e) => {
@@ -361,6 +517,7 @@ const Orders = () => {
           driver_id: driverId ? driverId : null,
           fleet_id: fleetId ? fleetId : null,
           assigned_amount: assignedAmount ? parseFloat(assignedAmount) : 0,
+          buyer_amount: buyerAmount ? parseFloat(buyerAmount) : 0,
           status: orderStatus,
           payment_status: paymentStatus
         });
@@ -376,6 +533,103 @@ const Orders = () => {
     }
   };
 
+  const handleOpenEditModal = async (load) => {
+    setEditOrderId(load.load_id);
+    setEditCustomer(load.customer || '');
+    setEditPickup(load.pickup || '');
+    setEditDrop(load.drop || '');
+    setEditEta(load.eta || '');
+    setEditBuyerId(load.buyer_id || '');
+    setEditSellerId(load.seller_id || '');
+    setEditDriverId(load.driver_id || '');
+    setEditFleetId(load.fleet_id || '');
+    setEditAssignedAmount(load.assigned_amount || 0);
+    setEditBuyerAmount(load.buyer_amount || 0);
+    setEditOrderStatus(load.status || 'Pending');
+    setEditPaymentStatus(load.payment_status || 'unpaid');
+    setIsEditModalOpen(true);
+    setEditError(null);
+
+    // Fetch buyer destinations for edit modal drop selector
+    if (load.buyer_id) {
+      try {
+        const res = await fetch(`${API_BASE}/api/buyer-warehouses?buyer_id=${load.buyer_id}`)
+        if (res.ok) {
+          const data = await res.json();
+          const whs = data.warehouses || [];
+          setEditBuyerDestinations(whs);
+          const isWarehouseDrop = whs.some(w => load.drop === `${w.name} – ${w.city}${w.state ? ', ' + w.state : ''}`);
+          setEditDropMode(isWarehouseDrop ? 'warehouse' : 'custom');
+        } else {
+          setEditBuyerDestinations([]);
+          setEditDropMode('custom');
+        }
+      } catch (e) {
+        setEditBuyerDestinations([]);
+        setEditDropMode('custom');
+      }
+    } else {
+      setEditBuyerDestinations([]);
+      setEditDropMode('custom');
+    }
+  };
+
+  const closeEditModal = () => {
+    setIsEditModalOpen(false);
+    setEditOrderId('');
+    setEditCustomer('');
+    setEditPickup('');
+    setEditDrop('');
+    setEditEta('');
+    setEditBuyerId('');
+    setEditSellerId('');
+    setEditDriverId('');
+    setEditFleetId('');
+    setEditAssignedAmount(0);
+    setEditBuyerAmount(0);
+    setEditOrderStatus('Pending');
+    setEditPaymentStatus('unpaid');
+    setEditError(null);
+    setEditRoutingData(null);
+    setEditRoutingError(null);
+    setIsEditPickupDropdownOpen(false);
+    setIsEditDropDropdownOpen(false);
+  };
+
+  const handleEditOrderSubmit = async (e) => {
+    e.preventDefault();
+    setEditLoading(true);
+    setEditError(null);
+    try {
+      const { error } = await supabase
+        .from('Load')
+        .update({
+          customer: editCustomer,
+          pickup: editPickup,
+          drop: editDrop,
+          eta: editEta,
+          buyer_id: editBuyerId ? editBuyerId : null,
+          seller_id: editSellerId ? editSellerId : null,
+          driver_id: editDriverId ? editDriverId : null,
+          fleet_id: editFleetId ? editFleetId : null,
+          assigned_amount: editAssignedAmount ? parseFloat(editAssignedAmount) : 0,
+          buyer_amount: editBuyerAmount ? parseFloat(editBuyerAmount) : 0,
+          status: editOrderStatus,
+          payment_status: editPaymentStatus
+        })
+        .eq('load_id', editOrderId);
+
+      if (error) throw error;
+
+      closeEditModal();
+      fetchData();
+    } catch (err) {
+      setEditError(err.message);
+    } finally {
+      setEditLoading(false);
+    }
+  };
+
   return (
     <div className="page orders">
       <div className="header-actions-container" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', flexWrap: 'wrap', gap: '16px' }}>
@@ -383,30 +637,32 @@ const Orders = () => {
           <h2>Orders</h2>
           <p>Track customer orders, delivery status, and fleet assignments.</p>
         </div>
-        <button
-          onClick={() => {
-            setIsAddModalOpen(true);
-            setOrderId(`ORD-${Math.floor(100000 + Math.random() * 900000)}`);
-            setRoutingData(null);
-            setRoutingError(null);
-          }}
-          style={{
-            padding: '10px 20px',
-            background: 'linear-gradient(135deg, #f97316 0%, #ea580c 100%)',
-            color: 'white',
-            border: 'none',
-            borderRadius: '12px',
-            fontWeight: '700',
-            fontSize: '0.9rem',
-            cursor: 'pointer',
-            boxShadow: '0 4px 12px rgba(249,115,22,0.2)',
-            transition: 'all 0.2s'
-          }}
-          onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = '0 6px 16px rgba(249,115,22,0.3)'; }}
-          onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(249,115,22,0.2)'; }}
-        >
-          + Add Order
-        </button>
+        {(userRole === 'seller' || userRole === 'owner') && (
+          <button
+            onClick={() => {
+              setIsAddModalOpen(true);
+              setOrderId(`ORD-${Math.floor(100000 + Math.random() * 900000)}`);
+              setRoutingData(null);
+              setRoutingError(null);
+            }}
+            style={{
+              padding: '10px 20px',
+              background: 'linear-gradient(135deg, #f97316 0%, #ea580c 100%)',
+              color: 'white',
+              border: 'none',
+              borderRadius: '12px',
+              fontWeight: '700',
+              fontSize: '0.9rem',
+              cursor: 'pointer',
+              boxShadow: '0 4px 12px rgba(249,115,22,0.2)',
+              transition: 'all 0.2s'
+            }}
+            onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = '0 6px 16px rgba(249,115,22,0.3)'; }}
+            onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(249,115,22,0.2)'; }}
+          >
+            + Add Order
+          </button>
+        )}
       </div>
 
         <div className="search-filter-sort-wrapper">
@@ -573,102 +829,469 @@ const Orders = () => {
       {sortedCards && sortedCards.length > 0 && (
         <div className="loads">
           {sortedCards.map((load) => {
+            const isExpanded = expandedCards.has(load.load_id);
+            const isFleet = load.load_id?.startsWith('FLEET-');
+            
+            // Get city names
+            const pickupCity = getCityFromLocation(load.pickup);
+            const dropCity = getCityFromLocation(load.drop);
+            
+            // Status mapping for visual badge
+            let statusConfig = { bg: '#fff7ed', text: '#f97316', label: load.status || 'Pending', dot: '#f97316' };
+            const lowerStatus = (load.status || '').toLowerCase();
+            const isUnpaid = load.payment_status !== 'paid';
+
+            if (isUnpaid && (lowerStatus === 'pending' || lowerStatus === 'confirmed')) {
+              statusConfig = { bg: '#fee2e2', text: '#ef4444', label: 'Not Confirmed', dot: '#ef4444' };
+            } else if (lowerStatus === 'running' || lowerStatus === 'assigned' || lowerStatus === 'in transit') {
+              statusConfig = { bg: '#f97316', text: '#ffffff', label: 'In Transit', dot: '#ffffff' };
+            } else if (lowerStatus === 'delivered' || lowerStatus === 'completed') {
+              statusConfig = { bg: '#dcfce7', text: '#16a34a', label: 'Delivered', dot: '#16a34a' };
+            } else if (lowerStatus === 'confirmed') {
+              statusConfig = { bg: '#dbeafe', text: '#2563eb', label: 'Confirmed', dot: '#2563eb' };
+            } else if (lowerStatus === 'stopped') {
+              statusConfig = { bg: '#fee2e2', text: '#ef4444', label: 'Stopped', dot: '#ef4444' };
+            }
+            
+            // Generate contextual AI insights
+            let aiInsight = "Route monitored by active systems.";
+            if (isUnpaid && (lowerStatus === 'pending' || lowerStatus === 'confirmed')) {
+              aiInsight = `Awaiting payment confirmation from the buyer to schedule route dispatch.`;
+            } else if (lowerStatus === 'pending') {
+              aiInsight = `Order registered. Awaiting fleet allocation and driver assignment for route.`;
+            } else if (lowerStatus === 'assigned') {
+              aiInsight = `Driver and vehicle assigned. Initial safety check complete. Ready for dispatch to ${dropCity || 'destination'}.`;
+            } else if (lowerStatus === 'running' || lowerStatus === 'in transit') {
+              aiInsight = `On schedule. Optimal route speed tracking. Traffic at ${dropCity || 'destination'} clearing.`;
+            } else if (lowerStatus === 'delivered') {
+              aiInsight = `Shipment safely delivered at ${dropCity || 'destination'}. Awaiting confirmation sign-off.`;
+            } else if (lowerStatus === 'confirmed') {
+              aiInsight = `Transaction complete. Payment reconciled and warehouse inventory updated.`;
+            } else if (lowerStatus === 'stopped') {
+              aiInsight = `Vehicle stationary. Routine check or driver rest period active.`;
+            }
+
             return (
-              <div key={load.load_id} className="load-card">
-                <div className="load-header">
-                  <div className="load-header-left">
-                    <div className="load-icon">
-                      <TruckIcon />
+              <div key={load.load_id} className="load-card" style={{
+                background: 'var(--bg-card, #ffffff)',
+                borderRadius: '24px',
+                padding: '24px',
+                boxShadow: '0 10px 30px rgba(0,0,0,0.04)',
+                border: '1px solid var(--border-color, #e2e8f0)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '16px',
+                transition: 'all 0.3s ease',
+                position: 'relative',
+                overflow: 'hidden'
+              }}>
+                {/* Visual indicator bar on the left side of the card, premium style */}
+                <div style={{
+                  position: 'absolute',
+                  left: 0,
+                  top: 0,
+                  bottom: 0,
+                  width: '5px',
+                  background: lowerStatus === 'running' || lowerStatus === 'assigned' || lowerStatus === 'in transit' 
+                    ? 'linear-gradient(180deg, #f97316, #ea580c)' 
+                    : lowerStatus === 'delivered' || lowerStatus === 'confirmed'
+                    ? 'linear-gradient(180deg, #10b981, #059669)'
+                    : 'linear-gradient(180deg, #cbd5e1, #94a3b8)'
+                }} />
+
+                {/* Card Header */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    {/* Peach Package Icon container */}
+                    <div style={{
+                      width: '42px',
+                      height: '42px',
+                      borderRadius: '12px',
+                      background: 'rgba(249, 115, 22, 0.08)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      border: '1px solid rgba(249, 115, 22, 0.15)'
+                    }}>
+                      <Package size={20} color="#f97316" />
                     </div>
-                    <h3>{load.customer}</h3>
+                    <div>
+                      <div style={{ fontSize: '0.68rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.5px' }}>ORDER REF</div>
+                      <div style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--text-primary, #0f172a)' }}>
+                        #{load.load_id}
+                      </div>
+                    </div>
                   </div>
-                  <span className="load-header-badge">ID: {load.load_id}</span>
+                  
+                  {/* Status Badge */}
+                  <span style={{
+                    background: statusConfig.bg,
+                    color: statusConfig.text,
+                    borderRadius: '20px',
+                    padding: '6px 12px',
+                    fontSize: '0.75rem',
+                    fontWeight: '700',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    boxShadow: statusConfig.text === '#ffffff' ? '0 4px 10px rgba(249,115,22,0.25)' : 'none'
+                  }}>
+                    <span style={{
+                      width: '6px',
+                      height: '6px',
+                      borderRadius: '50%',
+                      background: statusConfig.dot,
+                      display: 'inline-block'
+                    }} />
+                    {statusConfig.label}
+                  </span>
                 </div>
-                <div className="load-details">
-                  <div className="detail-item">
-                    <span className="detail-label">CUSTOMER</span>
-                    <span className="detail-value">{load.customer}</span>
-                  </div>
-                  <div className="detail-item">
-                    <span className="detail-label">PICKUP</span>
-                    <span className="detail-value">{load.pickup}</span>
-                  </div>
-                  <div className="detail-item">
-                    <span className="detail-label">DROP</span>
-                    <span className="detail-value">{load.drop}</span>
-                  </div>
-                  <div className="detail-item">
-                    <span className="detail-label">ETA</span>
-                    <span className="detail-value">{load.eta}</span>
-                  </div>
-                  <div className="detail-item stat-status">
-                    <span className="detail-label">STATUS</span>
-                    <span className="detail-value">{load.status}</span>
-                  </div>
-                  <div className="detail-item">
-                    <span className="detail-label">ASSIGNED DRIVER</span>
-                    <span className="detail-value">{load.assigned_driver || 'None'}</span>
-                  </div>
-                  <div className="detail-item">
-                    <span className="detail-label">VEHICLE NUMBER</span>
-                    <span className="detail-value">{load.vehicleId}</span>
-                  </div>
-                  <div className="detail-item">
-                    <span className="detail-label">PRICE</span>
-                    <span style={{ color: load.payment_status === 'paid' ? '#10b981' : '#3b82f6', fontWeight: 700 }}>
-                      {load.assigned_amount ? `₹${Number(load.assigned_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}` : 'Not Set'}
+
+                {/* Route Visualizer */}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '8px 0', width: '100%' }}>
+                  {/* Pickup City */}
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: '70px', textAlign: 'center' }}>
+                    <div style={{
+                      width: '38px',
+                      height: '38px',
+                      borderRadius: '10px',
+                      background: 'var(--bg-dark-only)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      boxShadow: '0 4px 10px rgba(15,23,42,0.15)'
+                    }}>
+                      <MapPin size={16} color="#ffffff" />
+                    </div>
+                    <span style={{ fontSize: '0.72rem', fontWeight: 800, color: 'var(--text-primary, #1e293b)', marginTop: '8px', letterSpacing: '0.5px' }}>
+                      {pickupCity}
                     </span>
                   </div>
-                  <div className="detail-item">
-                    <span className="detail-label">PAYMENT STATUS</span>
-                    <span style={{ color: load.payment_status === 'paid' ? '#10b981' : '#f59e0b', fontWeight: 700, textTransform: 'uppercase' }}>
-                      {load.payment_status || 'UNPAID'}
-                    </span>
+
+                  {/* Connected line with vehicle */}
+                  <div style={{ flexGrow: 1, height: '2px', background: '#e2e8f0', margin: '0 12px', position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <div style={{
+                      width: '26px',
+                      height: '26px',
+                      borderRadius: '50%',
+                      background: '#ffffff',
+                      border: '1.5px solid #f97316',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      boxShadow: '0 2px 6px rgba(249,115,22,0.15)'
+                    }}>
+                      <Truck size={14} color="#f97316" />
+                    </div>
                   </div>
-                  <div className="detail-item">
-                    <span className="detail-label">DRIVER ID</span>
-                    <span className="detail-value" style={{ fontSize: '0.9rem', fontFamily: 'monospace' }}>
-                      {localeDigits(load.driver_id) || 'None'}
+
+                  {/* Drop City */}
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: '70px', textAlign: 'center' }}>
+                    <div style={{
+                      width: '38px',
+                      height: '38px',
+                      borderRadius: '10px',
+                      background: 'var(--bg-inset)',
+                      border: '1.5px solid var(--border-inset)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center'
+                    }}>
+                      <Home size={16} color="var(--text-secondary)" />
+                    </div>
+                    <span style={{ fontSize: '0.72rem', fontWeight: 800, color: 'var(--text-primary, #1e293b)', marginTop: '8px', letterSpacing: '0.5px' }}>
+                      {dropCity}
                     </span>
                   </div>
                 </div>
 
-                {/* Pay Now Button — shown for buyers on unpaid orders */}
-                {userRole === 'buyer' && load.payment_status !== 'paid' && !load.load_id?.startsWith('FLEET-') && (
-                  <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border-color, rgba(0,0,0,0.06))' }}>
+                {/* ETA and VALUE block */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', background: 'var(--bg-inset)', padding: '12px 16px', borderRadius: '14px', border: '1px solid var(--border-color)' }}>
+                  <div>
+                    <span style={{ fontSize: '0.62rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', display: 'block', letterSpacing: '0.5px' }}>ETA</span>
+                    <span style={{ fontSize: '0.9rem', fontWeight: 800, color: 'var(--text-primary, #1e293b)' }}>{load.eta || 'N/A'}</span>
+                  </div>
+                  <div>
+                    <span style={{ fontSize: '0.62rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', display: 'block', letterSpacing: '0.5px' }}>
+                      {userRole === 'driver' ? 'EARNING' : 'VALUE'}
+                    </span>
+                    <span style={{ fontSize: '0.9rem', fontWeight: 800, color: 'var(--text-primary, #1e293b)', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                      {userRole === 'driver' 
+                        ? (load.assigned_amount ? `₹${Number(load.assigned_amount).toLocaleString("en-IN")}` : 'Not Set')
+                        : (load.buyer_amount ? `₹${Number(load.buyer_amount).toLocaleString("en-IN")}` : 'Not Set')
+                      }
+                      
+                      {userRole !== 'driver' && (
+                        /* Payment Status indicator pill inline */
+                        <span style={{
+                          fontSize: '0.62rem',
+                          fontWeight: 800,
+                          color: load.payment_status === 'paid' ? '#10b981' : '#3b82f6',
+                          background: load.payment_status === 'paid' ? '#e6fbf3' : '#eff6ff',
+                          padding: '2px 6px',
+                          borderRadius: '6px',
+                          textTransform: 'uppercase'
+                        }}>
+                          {load.payment_status === 'paid' ? 'PAID' : 'UNPAID'}
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                </div>
+
+                {/* AI Insight Box */}
+                {!isFleet && (
+                  <div style={{
+                    padding: '12px 16px',
+                    background: 'var(--bg-inset)',
+                    borderRadius: '16px',
+                    border: '1px solid var(--border-inset)',
+                    fontSize: '0.78rem',
+                    color: 'var(--text-secondary)',
+                    lineHeight: '1.4'
+                  }}>
+                    <strong style={{ color: 'var(--text-primary)', fontWeight: 700 }}>AI Insight:</strong> {aiInsight}
+                  </div>
+                )}
+
+                {/* Directly display Pay Now button for buyers if unpaid/partial */}
+                {userRole === 'buyer' && load.balance_due > 0 && !isFleet && (
+                  <button
+                    onClick={() => navigate(`/payments?orderId=${load.load_id}`)}
+                    style={{
+                      width: '100%',
+                      background: 'linear-gradient(135deg, #f97316 0%, #ea580c 100%)',
+                      color: 'white',
+                      border: 'none',
+                      padding: '12px 16px',
+                      borderRadius: '12px',
+                      fontWeight: 700,
+                      fontSize: '0.85rem',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '8px',
+                      boxShadow: '0 4px 12px rgba(249,115,22,0.25)',
+                      transition: 'all 0.2s',
+                    }}
+                    onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = '0 6px 16px rgba(249,115,22,0.35)'; }}
+                    onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(249,115,22,0.25)'; }}
+                  >
+                    <Lock size={14} /> Pay Now
+                  </button>
+                )}
+
+                {/* Expandable Details Container */}
+                {isExpanded && (
+                  <div style={{
+                    borderTop: '1px solid #f1f5f9',
+                    paddingTop: '16px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '12px'
+                  }}>
+                    {userRole === 'driver' ? (
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                          <span style={{ fontSize: '0.65rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase' }}>CUSTOMER (BUYER)</span>
+                          <span style={{ fontSize: '0.82rem', color: 'var(--text-primary)', fontWeight: 600 }}>{load.customer || 'N/A'}</span>
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                          <span style={{ fontSize: '0.65rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase' }}>STATUS</span>
+                          <span style={{ fontSize: '0.82rem', color: 'var(--text-primary)', fontWeight: 600 }}>{load.status}</span>
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', gridColumn: '1 / -1' }}>
+                          <span style={{ fontSize: '0.65rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase' }}>PICKUP ADDRESS</span>
+                          <span style={{ fontSize: '0.82rem', color: 'var(--text-primary)', fontWeight: 600 }}>{load.pickup}</span>
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', gridColumn: '1 / -1' }}>
+                          <span style={{ fontSize: '0.65rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase' }}>DROP ADDRESS</span>
+                          <span style={{ fontSize: '0.82rem', color: 'var(--text-primary)', fontWeight: 600 }}>{load.drop}</span>
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', gridColumn: '1 / -1' }}>
+                          <span style={{ fontSize: '0.65rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase' }}>BUYER CONTACT</span>
+                          <span style={{ fontSize: '0.82rem', color: 'var(--text-primary)', fontWeight: 600 }}>
+                            {load.buyer?.email ? `${load.buyer.email} ${load.buyer.phone ? `| ${load.buyer.phone}` : ''}` : 'N/A'}
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', gridColumn: '1 / -1' }}>
+                          <span style={{ fontSize: '0.65rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase' }}>SELLER CONTACT</span>
+                          <span style={{ fontSize: '0.82rem', color: 'var(--text-primary)', fontWeight: 600 }}>
+                            {load.seller?.email ? `${load.seller.email} ${load.seller.phone ? `| ${load.seller.phone}` : ''}` : 'N/A'}
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                          <span style={{ fontSize: '0.65rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase' }}>VEHICLE NUMBER</span>
+                          <span style={{ fontSize: '0.82rem', color: 'var(--text-primary)', fontWeight: 600 }}>{load.vehicleId || 'None'}</span>
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                          <span style={{ fontSize: '0.65rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase' }}>EARNING (YOUR PAY)</span>
+                          <span style={{ fontSize: '0.82rem', color: 'var(--text-primary)', fontWeight: 700 }}>
+                            {load.assigned_amount ? `₹${Number(load.assigned_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}` : 'Not Set'}
+                          </span>
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                          <span style={{ fontSize: '0.65rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase' }}>CUSTOMER</span>
+                          <span style={{ fontSize: '0.82rem', color: 'var(--text-primary)', fontWeight: 600 }}>{load.customer}</span>
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                          <span style={{ fontSize: '0.65rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase' }}>STATUS</span>
+                          <span style={{ fontSize: '0.82rem', color: 'var(--text-primary)', fontWeight: 600 }}>{load.status}</span>
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', gridColumn: '1 / -1' }}>
+                          <span style={{ fontSize: '0.65rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase' }}>PICKUP ADDRESS</span>
+                          <span style={{ fontSize: '0.82rem', color: 'var(--text-primary)', fontWeight: 600 }}>{load.pickup}</span>
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', gridColumn: '1 / -1' }}>
+                          <span style={{ fontSize: '0.65rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase' }}>DROP ADDRESS</span>
+                          <span style={{ fontSize: '0.82rem', color: 'var(--text-primary)', fontWeight: 600 }}>{load.drop}</span>
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                          <span style={{ fontSize: '0.65rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase' }}>ASSIGNED DRIVER</span>
+                          <span style={{ fontSize: '0.82rem', color: 'var(--text-primary)', fontWeight: 600 }}>{load.assigned_driver || 'None'}</span>
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                          <span style={{ fontSize: '0.65rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase' }}>VEHICLE NUMBER</span>
+                          <span style={{ fontSize: '0.82rem', color: 'var(--text-primary)', fontWeight: 600 }}>{load.vehicleId || 'None'}</span>
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                          <span style={{ fontSize: '0.65rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase' }}>PRICE (DRIVER)</span>
+                          <span style={{ fontSize: '0.82rem', color: 'var(--text-primary)', fontWeight: 700 }}>
+                            {load.assigned_amount ? `₹${Number(load.assigned_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}` : 'Not Set'}
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                          <span style={{ fontSize: '0.65rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase' }}>PRICE (BUYER)</span>
+                          <span style={{ fontSize: '0.82rem', color: 'var(--text-primary)', fontWeight: 700 }}>
+                            {load.buyer_amount ? `₹${Number(load.buyer_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}` : 'Not Set'}
+                          </span>
+                        </div>
+                        {load.total_paid > 0 && load.payment_status !== 'paid' && (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                            <span style={{ fontSize: '0.65rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase' }}>PAID AMOUNT</span>
+                            <span style={{ fontSize: '0.82rem', color: '#10b981', fontWeight: 700 }}>
+                              ₹{Number(load.total_paid).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                            </span>
+                          </div>
+                        )}
+                        {load.balance_due > 0 && (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                            <span style={{ fontSize: '0.65rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase' }}>BALANCE DUE</span>
+                            <span style={{ fontSize: '0.82rem', color: '#ef4444', fontWeight: 700 }}>
+                              ₹{Number(load.balance_due).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                            </span>
+                          </div>
+                        )}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', gridColumn: '1 / -1' }}>
+                          <span style={{ fontSize: '0.65rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase' }}>DRIVER ID</span>
+                          <span style={{ fontSize: '0.82rem', color: 'var(--text-primary)', fontFamily: 'monospace' }}>{localeDigits(load.driver_id) || 'None'}</span>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Edit Order Button — shown only for sellers/owners within details */}
+                    {(userRole === 'seller' || userRole === 'owner') && !isFleet && (
+                      <button
+                        onClick={() => handleOpenEditModal(load)}
+                        style={{
+                          width: '100%',
+                          background: 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)',
+                          color: 'white',
+                          border: 'none',
+                          padding: '10px 16px',
+                          borderRadius: '10px',
+                          fontWeight: 700,
+                          fontSize: '0.82rem',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '8px',
+                          boxShadow: '0 4px 10px rgba(59,130,246,0.2)',
+                          transition: 'all 0.2s',
+                          marginTop: '8px'
+                        }}
+                      >
+                        Edit Order
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {/* Card Footer Actions */}
+                <div style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  borderTop: '1px solid #f1f5f9',
+                  paddingTop: '16px',
+                  marginTop: 'auto'
+                }}>
+                  {/* Details Toggle Button */}
+                  <button
+                    onClick={() => toggleCardExpansion(load.load_id)}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: '#64748b',
+                      fontSize: '0.85rem',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      padding: 0
+                    }}
+                  >
+                    Details
+                    {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                  </button>
+
+                  {/* Track Live button */}
+                  {lowerStatus === 'running' || lowerStatus === 'in transit' ? (
                     <button
-                      onClick={() => navigate(`/payments?orderId=${load.load_id}`)}
+                      onClick={() => navigate(`/map?loadId=${load.load_id}`)}
                       style={{
-                        width: '100%',
-                        background: 'linear-gradient(135deg, #f97316 0%, #ea580c 100%)',
+                        background: '#2563eb',
                         color: 'white',
                         border: 'none',
-                        padding: '10px 16px',
-                        borderRadius: '10px',
+                        padding: '8px 16px',
+                        borderRadius: '20px',
                         fontWeight: 700,
-                        fontSize: '0.875rem',
+                        fontSize: '0.82rem',
                         cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: '8px',
-                        boxShadow: '0 4px 12px rgba(249,115,22,0.3)',
-                        transition: 'all 0.2s',
+                        boxShadow: '0 4px 10px rgba(37,99,235,0.2)',
+                        transition: 'all 0.2s'
                       }}
-                      onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = '0 6px 16px rgba(249,115,22,0.4)'; }}
-                      onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(249,115,22,0.3)'; }}
+                      onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = '0 6px 14px rgba(37,99,235,0.3)'; }}
+                      onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = '0 4px 10px rgba(37,99,235,0.2)'; }}
                     >
-                      <Lock size={14} /> Pay Now
+                      Track Live
                     </button>
-                  </div>
-                )}
-                {load.payment_status === 'paid' && !load.load_id?.startsWith('FLEET-') && (
-                  <div style={{ padding: '8px 16px', borderTop: '1px solid var(--border-color, rgba(0,0,0,0.06))', textAlign: 'center' }}>
-                    <span style={{ color: '#10b981', fontWeight: 700, fontSize: '0.85rem', display: 'inline-flex', alignItems: 'center', gap: '4px' }}><CheckCircle size={14} /> Payment Received</span>
-                  </div>
-                )}
+                  ) : (
+                    <button
+                      disabled
+                      style={{
+                        background: '#f1f5f9',
+                        color: '#94a3b8',
+                        border: 'none',
+                        padding: '8px 16px',
+                        borderRadius: '20px',
+                        fontWeight: 700,
+                        fontSize: '0.82rem',
+                        cursor: 'not-allowed'
+                      }}
+                    >
+                      Track Live
+                    </button>
+                  )}
+                </div>
               </div>
-            )
+            );
           })}
         </div>
       )}
@@ -718,11 +1341,65 @@ const Orders = () => {
               </div>
  
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                <div>
+                <div ref={pickupDropdownRef} style={{ position: 'relative' }}>
                   <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', color: '#64748b', marginBottom: '6px' }}>Pickup Location</label>
-                  <input type="text" required value={pickup} onChange={e => setPickup(e.target.value)} style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', border: '1px solid #cbd5e1', outline: 'none' }} placeholder="Mumbai" />
+                  <input
+                    type="text"
+                    required
+                    value={pickup}
+                    onChange={e => {
+                      setPickup(e.target.value);
+                      setIsPickupDropdownOpen(true);
+                    }}
+                    onFocus={() => setIsPickupDropdownOpen(true)}
+                    style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', border: '1px solid #cbd5e1', outline: 'none' }}
+                    placeholder="Type warehouse or custom location..."
+                  />
+                  {isPickupDropdownOpen && (
+                    <div style={{
+                      position: 'absolute',
+                      top: '100%',
+                      left: 0,
+                      right: 0,
+                      backgroundColor: 'var(--bg-card, #ffffff)',
+                      border: '1px solid var(--border-color, #cbd5e1)',
+                      borderRadius: '12px',
+                      boxShadow: '0 10px 25px rgba(0,0,0,0.1)',
+                      maxHeight: '200px',
+                      overflowY: 'auto',
+                      zIndex: 10,
+                      marginTop: '4px'
+                    }}>
+                      {filteredPickups.length > 0 ? (
+                        filteredPickups.map(w => (
+                          <div
+                            key={w.id}
+                            onClick={() => {
+                              setPickup(w.name);
+                              setIsPickupDropdownOpen(false);
+                            }}
+                            style={{
+                              padding: '10px 16px',
+                              cursor: 'pointer',
+                              fontSize: '0.875rem',
+                              borderBottom: '1px solid var(--border-color, #f1f5f9)',
+                              transition: 'background-color 0.15s'
+                            }}
+                            onMouseEnter={e => e.currentTarget.style.backgroundColor = 'rgba(249, 115, 22, 0.08)'}
+                            onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}
+                          >
+                            🏢 {w.name}
+                          </div>
+                        ))
+                      ) : (
+                        <div style={{ padding: '10px 16px', fontSize: '0.85rem', color: '#64748b', fontStyle: 'italic' }}>
+                          No matching warehouses found. Press enter or click outside to use custom location.
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
-                <div>
+                <div ref={dropDropdownRef} style={{ position: 'relative' }}>
                   <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', color: '#64748b', marginBottom: '6px' }}>Drop Location</label>
                   {buyerDestinations.length > 0 && (
                     <div style={{ display: 'flex', gap: '6px', marginBottom: '8px', flexWrap: 'wrap' }}>
@@ -733,7 +1410,10 @@ const Orders = () => {
                           <button
                             key={wh.id}
                             type="button"
-                            onClick={() => { setDrop(label); setDropMode('warehouse'); }}
+                            onClick={() => {
+                              setDrop(label);
+                              setDropMode('warehouse');
+                            }}
                             style={{
                               padding: '5px 12px',
                               borderRadius: '20px',
@@ -755,7 +1435,10 @@ const Orders = () => {
                       })}
                       <button
                         type="button"
-                        onClick={() => { setDropMode('custom'); setDrop(''); }}
+                        onClick={() => {
+                          setDropMode('custom');
+                          setDrop('');
+                        }}
                         style={{
                           padding: '5px 12px',
                           borderRadius: '20px',
@@ -770,12 +1453,62 @@ const Orders = () => {
                       </button>
                     </div>
                   )}
-                  {buyerDestinations.length > 0 && drop && (
-                    <div style={{ fontSize: '0.75rem', color: '#10b981', marginBottom: '6px', fontWeight: 600 }}>
-                      ✓ Delivery to: {drop}
+                  <input
+                    type="text"
+                    required
+                    value={drop}
+                    onChange={e => {
+                      setDrop(e.target.value);
+                      setDropMode('custom');
+                      setIsDropDropdownOpen(true);
+                    }}
+                    onFocus={() => setIsDropDropdownOpen(true)}
+                    style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', border: '1px solid #cbd5e1', outline: 'none' }}
+                    placeholder={buyerDestinations.length > 0 ? 'Or type warehouse or custom location...' : 'Type warehouse or custom location...'}
+                  />
+                  {isDropDropdownOpen && (
+                    <div style={{
+                      position: 'absolute',
+                      top: '100%',
+                      left: 0,
+                      right: 0,
+                      backgroundColor: 'var(--bg-card, #ffffff)',
+                      border: '1px solid var(--border-color, #cbd5e1)',
+                      borderRadius: '12px',
+                      boxShadow: '0 10px 25px rgba(0,0,0,0.1)',
+                      maxHeight: '200px',
+                      overflowY: 'auto',
+                      zIndex: 10,
+                      marginTop: '4px'
+                    }}>
+                      {filteredDrops.length > 0 ? (
+                        filteredDrops.map(w => (
+                          <div
+                            key={w.id}
+                            onClick={() => {
+                              setDrop(w.name);
+                              setIsDropDropdownOpen(false);
+                            }}
+                            style={{
+                              padding: '10px 16px',
+                              cursor: 'pointer',
+                              fontSize: '0.875rem',
+                              borderBottom: '1px solid var(--border-color, #f1f5f9)',
+                              transition: 'background-color 0.15s'
+                            }}
+                            onMouseEnter={e => e.currentTarget.style.backgroundColor = 'rgba(249, 115, 22, 0.08)'}
+                            onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}
+                          >
+                            🏢 {w.name}
+                          </div>
+                        ))
+                      ) : (
+                        <div style={{ padding: '10px 16px', fontSize: '0.85rem', color: '#64748b', fontStyle: 'italic' }}>
+                          No matching warehouses found. Press enter or click outside to use custom location.
+                        </div>
+                      )}
                     </div>
                   )}
-                  <input type="text" required value={drop} onChange={e => { setDrop(e.target.value); setDropMode('custom'); }} style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', border: '1px solid #cbd5e1', outline: 'none' }} placeholder={buyerDestinations.length > 0 ? 'Or type a custom location...' : 'Pune'} />
                   {buyerDestinations.length === 0 && buyerId && (
                     <div style={{ fontSize: '0.75rem', color: '#94a3b8', marginTop: '4px' }}>
                       ℹ This buyer has not registered any destination warehouses.
@@ -861,16 +1594,20 @@ const Orders = () => {
                 )}
               </div>
  
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px' }}>
                 <div>
                   <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', color: '#64748b', marginBottom: '6px' }}>
-                    ETA <span style={{ fontSize: '0.65rem', textTransform: 'none', color: '#f97316', fontWeight: 'normal' }}>(Estimated Time of Arrival, e.g. "24 Hours")</span>
+                    ETA <span style={{ fontSize: '0.65rem', textTransform: 'none', color: '#f97316', fontWeight: 'normal' }}>(e.g. "24 Hours")</span>
                   </label>
                   <input type="text" value={eta} onChange={e => setEta(e.target.value)} style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', border: '1px solid #cbd5e1', outline: 'none' }} placeholder="24 Hours" />
                 </div>
                 <div>
-                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', color: '#64748b', marginBottom: '6px' }}>Assigned Price (INR)</label>
+                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', color: '#64748b', marginBottom: '6px' }}>Price for Driver (INR)</label>
                   <input type="number" value={assignedAmount} onChange={e => setAssignedAmount(e.target.value)} style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', border: '1px solid #cbd5e1', outline: 'none' }} placeholder="25000" />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', color: '#64748b', marginBottom: '6px' }}>Price for Buyer (INR)</label>
+                  <input type="number" value={buyerAmount} onChange={e => setBuyerAmount(e.target.value)} style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', border: '1px solid #cbd5e1', outline: 'none' }} placeholder="30000" />
                 </div>
               </div>
  
@@ -965,6 +1702,442 @@ const Orders = () => {
                 <button type="button" onClick={closeAddModal} style={{ padding: '12px 20px', borderRadius: '12px', border: '1px solid #cbd5e1', background: 'transparent', cursor: 'pointer', fontWeight: 700 }}>Cancel</button>
                 <button type="submit" disabled={addLoading} style={{ padding: '12px 24px', borderRadius: '12px', border: 'none', background: 'linear-gradient(135deg, #f97316 0%, #ea580c 100%)', color: 'white', fontWeight: 700, cursor: 'pointer' }}>
                   {addLoading ? 'Creating...' : 'Create Order'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {isEditModalOpen && (
+        <div style={{
+          position: 'fixed', inset: 0,
+          background: 'rgba(15, 23, 42, 0.6)',
+          backdropFilter: 'blur(8px)',
+          zIndex: 9999, display: 'flex',
+          alignItems: 'center', justifyContent: 'center',
+          padding: '20px'
+        }}>
+          <div style={{
+            background: 'var(--bg-card, #ffffff)',
+            borderRadius: '24px', width: '100%',
+            maxWidth: '560px', padding: '32px',
+            boxShadow: '0 24px 60px rgba(0,0,0,0.15)',
+            border: '1px solid var(--border-color, #e2e8f0)',
+            position: 'relative',
+            maxHeight: '90vh',
+            overflowY: 'auto'
+          }}>
+            <h3 style={{ margin: '0 0 8px 0', fontSize: '1.25rem', fontWeight: 800, color: '#0f172a' }}>Edit Order</h3>
+            <p style={{ margin: '0 0 24px 0', fontSize: '0.875rem', color: '#64748b' }}>Modify order logistics, status, pricing, and driver assignments.</p>
+
+            {editError && (
+              <div style={{
+                padding: '12px 16px', background: '#fee2e2', color: '#ef4444',
+                borderRadius: '12px', fontSize: '0.85rem', fontWeight: 600,
+                marginBottom: '16px', border: '1px solid #fecaca'
+              }}>
+                ✗ {editError}
+              </div>
+            )}
+
+            <form onSubmit={handleEditOrderSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', color: '#64748b', marginBottom: '6px' }}>Order ID</label>
+                  <input type="text" readOnly required value={editOrderId} style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', border: '1px solid #cbd5e1', outline: 'none', background: '#f1f5f9', cursor: 'not-allowed' }} />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', color: '#64748b', marginBottom: '6px' }}>Customer Name (Auto-filled)</label>
+                  <input type="text" readOnly required value={editCustomer} style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', border: '1px solid #cbd5e1', outline: 'none', background: '#f1f5f9', cursor: 'not-allowed' }} placeholder="Select a Buyer below..." />
+                </div>
+              </div>
+ 
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                <div ref={editPickupDropdownRef} style={{ position: 'relative' }}>
+                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', color: '#64748b', marginBottom: '6px' }}>Pickup Location</label>
+                  <input
+                    type="text"
+                    required
+                    value={editPickup}
+                    onChange={e => {
+                      setEditPickup(e.target.value);
+                      setIsEditPickupDropdownOpen(true);
+                    }}
+                    onFocus={() => setIsEditPickupDropdownOpen(true)}
+                    style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', border: '1px solid #cbd5e1', outline: 'none' }}
+                    placeholder="Type warehouse or custom location..."
+                  />
+                  {isEditPickupDropdownOpen && (
+                    <div style={{
+                      position: 'absolute',
+                      top: '100%',
+                      left: 0,
+                      right: 0,
+                      backgroundColor: 'var(--bg-card, #ffffff)',
+                      border: '1px solid var(--border-color, #cbd5e1)',
+                      borderRadius: '12px',
+                      boxShadow: '0 10px 25px rgba(0,0,0,0.1)',
+                      maxHeight: '200px',
+                      overflowY: 'auto',
+                      zIndex: 10,
+                      marginTop: '4px'
+                    }}>
+                      {filteredEditPickups.length > 0 ? (
+                        filteredEditPickups.map(w => (
+                          <div
+                            key={w.id}
+                            onClick={() => {
+                              setEditPickup(w.name);
+                              setIsEditPickupDropdownOpen(false);
+                            }}
+                            style={{
+                              padding: '10px 16px',
+                              cursor: 'pointer',
+                              fontSize: '0.875rem',
+                              borderBottom: '1px solid var(--border-color, #f1f5f9)',
+                              transition: 'background-color 0.15s'
+                            }}
+                            onMouseEnter={e => e.currentTarget.style.backgroundColor = 'rgba(249, 115, 22, 0.08)'}
+                            onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}
+                          >
+                            🏢 {w.name}
+                          </div>
+                        ))
+                      ) : (
+                        <div style={{ padding: '10px 16px', fontSize: '0.85rem', color: '#64748b', fontStyle: 'italic' }}>
+                          No matching warehouses found. Press enter or click outside to use custom location.
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+                <div ref={editDropDropdownRef} style={{ position: 'relative' }}>
+                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', color: '#64748b', marginBottom: '6px' }}>Drop Location</label>
+                  {editBuyerDestinations.length > 0 && (
+                    <div style={{ display: 'flex', gap: '6px', marginBottom: '8px', flexWrap: 'wrap' }}>
+                      {editBuyerDestinations.map(wh => {
+                        const label = `${wh.name} – ${wh.city}${wh.state ? ', ' + wh.state : ''}`;
+                        const isSelected = editDrop === label;
+                        return (
+                          <button
+                            key={wh.id}
+                            type="button"
+                            onClick={() => {
+                              setEditDrop(label);
+                              setEditDropMode('warehouse');
+                            }}
+                            style={{
+                              padding: '5px 12px',
+                              borderRadius: '20px',
+                              border: isSelected ? '1.5px solid #f97316' : '1px solid rgba(249,115,22,0.3)',
+                              background: isSelected ? 'rgba(249,115,22,0.12)' : 'transparent',
+                              color: isSelected ? '#f97316' : '#64748b',
+                              fontWeight: isSelected ? 700 : 500,
+                              fontSize: '0.78rem',
+                              cursor: 'pointer',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              transition: 'all 0.15s'
+                            }}
+                          >
+                            {wh.is_default && '⭐ '}{wh.name}
+                          </button>
+                        );
+                      })}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditDropMode('custom');
+                          setEditDrop('');
+                        }}
+                        style={{
+                          padding: '5px 12px',
+                          borderRadius: '20px',
+                          border: editDropMode === 'custom' && !editBuyerDestinations.some(w => editDrop === `${w.name} – ${w.city}${w.state ? ', ' + w.state : ''}`) ? '1.5px solid #64748b' : '1px dashed #94a3b8',
+                          background: 'transparent',
+                          color: '#64748b',
+                          fontSize: '0.78rem',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        + Custom
+                      </button>
+                    </div>
+                  )}
+                  <input
+                    type="text"
+                    required
+                    value={editDrop}
+                    onChange={e => {
+                      setEditDrop(e.target.value);
+                      setEditDropMode('custom');
+                      setIsEditDropDropdownOpen(true);
+                    }}
+                    onFocus={() => setIsEditDropDropdownOpen(true)}
+                    style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', border: '1px solid #cbd5e1', outline: 'none' }}
+                    placeholder={editBuyerDestinations.length > 0 ? 'Or type warehouse or custom location...' : 'Type warehouse or custom location...'}
+                  />
+                  {isEditDropDropdownOpen && (
+                    <div style={{
+                      position: 'absolute',
+                      top: '100%',
+                      left: 0,
+                      right: 0,
+                      backgroundColor: 'var(--bg-card, #ffffff)',
+                      border: '1px solid var(--border-color, #cbd5e1)',
+                      borderRadius: '12px',
+                      boxShadow: '0 10px 25px rgba(0,0,0,0.1)',
+                      maxHeight: '200px',
+                      overflowY: 'auto',
+                      zIndex: 10,
+                      marginTop: '4px'
+                    }}>
+                      {filteredEditDrops.length > 0 ? (
+                        filteredEditDrops.map(w => (
+                          <div
+                            key={w.id}
+                            onClick={() => {
+                              setEditDrop(w.name);
+                              setIsEditDropDropdownOpen(false);
+                            }}
+                            style={{
+                              padding: '10px 16px',
+                              cursor: 'pointer',
+                              fontSize: '0.875rem',
+                              borderBottom: '1px solid var(--border-color, #f1f5f9)',
+                              transition: 'background-color 0.15s'
+                            }}
+                            onMouseEnter={e => e.currentTarget.style.backgroundColor = 'rgba(249, 115, 22, 0.08)'}
+                            onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}
+                          >
+                            🏢 {w.name}
+                          </div>
+                        ))
+                      ) : (
+                        <div style={{ padding: '10px 16px', fontSize: '0.85rem', color: '#64748b', fontStyle: 'italic' }}>
+                          No matching warehouses found. Press enter or click outside to use custom location.
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {editBuyerDestinations.length === 0 && editBuyerId && (
+                    <div style={{ fontSize: '0.75rem', color: '#94a3b8', marginTop: '4px' }}>
+                      ℹ This buyer has not registered any destination warehouses.
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Route Optimization Preview Section */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', padding: '16px', borderRadius: '16px', background: 'rgba(249, 115, 22, 0.05)', border: '1px solid rgba(249, 115, 22, 0.15)', marginTop: '8px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-primary)' }}>Smart Route Optimization</span>
+                  <button
+                    type="button"
+                    onClick={handleCalculateEditRoute}
+                    disabled={editRoutingLoading}
+                    style={{
+                      padding: '8px 14px',
+                      background: 'rgba(249,115,22,0.1)',
+                      color: '#f97316',
+                      border: '1px solid #f97316',
+                      borderRadius: '8px',
+                      fontWeight: '700',
+                      fontSize: '0.75rem',
+                      cursor: 'pointer',
+                      transition: 'all 0.15s'
+                    }}
+                  >
+                    {editRoutingLoading ? 'Calculating...' : 'Calculate Route'}
+                  </button>
+                </div>
+                
+                {editRoutingError && (
+                  <div style={{ fontSize: '0.8rem', color: '#ef4444', fontWeight: 600 }}>
+                    ⚠ {editRoutingError}
+                  </div>
+                )}
+                
+                {editRoutingData && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    {/* Metrics grid */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px' }}>
+                      <div style={{ background: 'var(--bg-card, #fff)', padding: '10px', borderRadius: '10px', border: '1px solid var(--border-color, #e2e8f0)', textAlign: 'center' }}>
+                        <div style={{ fontSize: '0.65rem', color: '#64748b', fontWeight: 'bold' }}>DISTANCE</div>
+                        <div style={{ fontSize: '0.9rem', fontWeight: 800, color: '#f97316' }}>{editRoutingData.optimized.distance_km.toFixed(1)} km</div>
+                        <div style={{ fontSize: '0.6rem', color: '#10b981', fontWeight: 600 }}>Save {editRoutingData.savings.distance_km.toFixed(1)} km</div>
+                      </div>
+                      <div style={{ background: 'var(--bg-card, #fff)', padding: '10px', borderRadius: '10px', border: '1px solid var(--border-color, #e2e8f0)', textAlign: 'center' }}>
+                        <div style={{ fontSize: '0.65rem', color: '#64748b', fontWeight: 'bold' }}>FUEL COST</div>
+                        <div style={{ fontSize: '0.9rem', fontWeight: 800, color: '#f97316' }}>₹{Math.round(editRoutingData.optimized.fuel_cost).toLocaleString('en-IN')}</div>
+                        <div style={{ fontSize: '0.6rem', color: '#10b981', fontWeight: 600 }}>Save ₹{Math.round(editRoutingData.savings.fuel_cost).toLocaleString('en-IN')}</div>
+                      </div>
+                      <div style={{ background: 'var(--bg-card, #fff)', padding: '10px', borderRadius: '10px', border: '1px solid var(--border-color, #e2e8f0)', textAlign: 'center' }}>
+                        <div style={{ fontSize: '0.65rem', color: '#64748b', fontWeight: 'bold' }}>CO2 EMISSIONS</div>
+                        <div style={{ fontSize: '0.9rem', fontWeight: 800, color: '#f97316' }}>{editRoutingData.optimized.co2_kg.toFixed(1)} kg</div>
+                        <div style={{ fontSize: '0.6rem', color: '#10b981', fontWeight: 600 }}>Save {editRoutingData.savings.co2_kg.toFixed(1)} kg</div>
+                      </div>
+                    </div>
+                    
+                    {/* Mini Leaflet Map */}
+                    <div style={{ height: '180px', width: '100%', borderRadius: '12px', overflow: 'hidden', border: '1px solid var(--border-color, #e2e8f0)' }}>
+                      <MapContainer
+                        center={editRoutingData.pickup.coords}
+                        zoom={7}
+                        style={{ height: '100%', width: '100%' }}
+                        zoomControl={false}
+                      >
+                        <TileLayer
+                          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                          attribution='&copy; OpenStreetMap'
+                        />
+                        <Marker position={editRoutingData.pickup.coords} icon={pickupIcon} />
+                        <Marker position={editRoutingData.drop.coords} icon={dropIcon} />
+                        <Polyline
+                          positions={editRoutingData.optimized.geometry.coordinates.map(([lng, lat]) => [lat, lng])}
+                          color="#f97316"
+                          weight={4}
+                          opacity={0.8}
+                        />
+                      </MapContainer>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', color: '#64748b', marginBottom: '6px' }}>
+                    ETA <span style={{ fontSize: '0.65rem', textTransform: 'none', color: '#f97316', fontWeight: 'normal' }}>(e.g. "24 Hours")</span>
+                  </label>
+                  <input type="text" value={editEta} onChange={e => setEditEta(e.target.value)} style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', border: '1px solid #cbd5e1', outline: 'none' }} placeholder="24 Hours" />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', color: '#64748b', marginBottom: '6px' }}>Price for Driver (INR)</label>
+                  <input type="number" value={editAssignedAmount} onChange={e => setEditAssignedAmount(e.target.value)} style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', border: '1px solid #cbd5e1', outline: 'none' }} placeholder="25000" />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', color: '#64748b', marginBottom: '6px' }}>Price for Buyer (INR)</label>
+                  <input type="number" value={editBuyerAmount} onChange={e => setEditBuyerAmount(e.target.value)} style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', border: '1px solid #cbd5e1', outline: 'none' }} placeholder="30000" />
+                </div>
+              </div>
+ 
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', color: '#64748b', marginBottom: '6px' }}>Buyer</label>
+                  <select
+                    required
+                    value={editBuyerId}
+                    onChange={async e => {
+                      const selectedId = e.target.value;
+                      setEditBuyerId(selectedId);
+                      const buyerObj = buyersList.find(b => b.id === selectedId);
+                      setEditCustomer(buyerObj ? buyerObj.full_name : '');
+                      
+                      if (!selectedId) { setEditBuyerDestinations([]); return; }
+                      try {
+                        const res = await fetch(`${API_BASE}/api/buyer-warehouses?buyer_id=${selectedId}`)
+                        if (res.ok) {
+                          const data = await res.json();
+                          const whs = data.warehouses || [];
+                          setEditBuyerDestinations(whs);
+                          const primary = whs.find(w => w.is_default) || whs[0];
+                          if (primary) {
+                            const dropLabel = `${primary.name} – ${primary.city}${primary.state ? ', ' + primary.state : ''}`;
+                            setEditDrop(dropLabel);
+                            setEditDropMode('warehouse');
+                          } else {
+                            setEditDropMode('custom');
+                          }
+                        } else {
+                          setEditBuyerDestinations([]);
+                          setEditDropMode('custom');
+                        }
+                      } catch (e) {
+                        setEditBuyerDestinations([]);
+                        setEditDropMode('custom');
+                      }
+                    }}
+                    style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', border: '1px solid #cbd5e1', outline: 'none', background: 'var(--bg-card)' }}
+                  >
+                    <option value="">Select Buyer</option>
+                    {buyersList.map(b => (
+                      <option key={b.id} value={b.id}>{b.full_name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', color: '#64748b', marginBottom: '6px' }}>Seller</label>
+                  <select value={editSellerId} onChange={e => setEditSellerId(e.target.value)} style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', border: '1px solid #cbd5e1', outline: 'none', background: 'var(--bg-card)' }}>
+                    <option value="">Select Seller</option>
+                    {sellersList.map(s => (
+                      <option key={s.id} value={s.id}>{s.full_name}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+ 
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', color: '#64748b', marginBottom: '6px' }}>Fleet Vehicle (Active Only)</label>
+                  <select
+                    required
+                    value={editFleetId}
+                    onChange={e => {
+                      const selectedId = e.target.value;
+                      setEditFleetId(selectedId);
+                      const selectedVehicle = fleetData.find(v => v.id === selectedId);
+                      if (selectedVehicle?.driver_id) {
+                        setEditDriverId(selectedVehicle.driver_id);
+                      } else {
+                        setEditDriverId('');
+                      }
+                    }}
+                    style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', border: '1px solid #cbd5e1', outline: 'none', background: 'var(--bg-card)' }}
+                  >
+                    <option value="">Select Vehicle</option>
+                    {fleetData.filter(v => v.status === 'Active' || v.status === 'Running').map(v => (
+                      <option key={v.id} value={v.id}>{v.vehicle_number} {v.profiles?.full_name ? `(${v.profiles.full_name})` : ''}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', color: '#64748b', marginBottom: '6px' }}>Assigned Driver (Auto-selected)</label>
+                  <input
+                    type="text"
+                    readOnly
+                    value={driversList.find(d => d.id === editDriverId)?.full_name || 'No driver assigned to selected vehicle'}
+                    style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', border: '1px solid #cbd5e1', outline: 'none', background: '#f1f5f9', cursor: 'not-allowed' }}
+                  />
+                </div>
+              </div>
+ 
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', color: '#64748b', marginBottom: '6px' }}>Order Status</label>
+                  <select value={editOrderStatus} onChange={e => setEditOrderStatus(e.target.value)} style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', border: '1px solid #cbd5e1', outline: 'none', background: 'var(--bg-card)' }}>
+                    <option value="Pending">Pending</option>
+                    <option value="Assigned">Assigned</option>
+                    <option value="Running">Running</option>
+                    <option value="Delivered">Delivered</option>
+                    <option value="Confirmed">Confirmed</option>
+                  </select>
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', color: '#64748b', marginBottom: '6px' }}>Payment Status</label>
+                  <select value={editPaymentStatus} onChange={e => setEditPaymentStatus(e.target.value)} style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', border: '1px solid #cbd5e1', outline: 'none', background: 'var(--bg-card)' }}>
+                    <option value="unpaid">Unpaid</option>
+                    <option value="paid">Paid</option>
+                  </select>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '12px' }}>
+                <button type="button" onClick={closeEditModal} style={{ padding: '12px 20px', borderRadius: '12px', border: '1px solid #cbd5e1', background: 'transparent', cursor: 'pointer', fontWeight: 700 }}>Cancel</button>
+                <button type="submit" disabled={editLoading} style={{ padding: '12px 24px', borderRadius: '12px', border: 'none', background: 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)', color: 'white', fontWeight: 700, cursor: 'pointer' }}>
+                  {editLoading ? 'Saving...' : 'Save Changes'}
                 </button>
               </div>
             </form>

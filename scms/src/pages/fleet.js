@@ -142,10 +142,20 @@ const Fleet = () => {
       console.log('Error fetching drivers metadata:', driversError)
     }
 
+    // Fetch running loads to accurately determine "Running" status
+    const { data: runningLoads } = await supabase
+      .from('Load')
+      .select('driver_id')
+      .eq('status', 'Running')
+
+    const runningDriverIds = new Set((runningLoads || []).map(l => l.driver_id))
+
     const mappedFleet = (fleet || []).map(vehicle => {
       const driverMeta = (drivers || []).find(d => d.id === vehicle.driver_id)
+      const isRunning = vehicle.driver_id && runningDriverIds.has(vehicle.driver_id)
       return {
         ...vehicle,
+        status: isRunning ? 'Running' : 'Stopped',
         license_number: driverMeta?.license_number || 'N/A',
         driver_status: driverMeta?.verified ? 'Verified' : 'Unverified'
       }

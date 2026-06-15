@@ -10,7 +10,7 @@ export const detectIntent = (message) => {
         orders: ["order", "delivery", "load", "eta", "customer", "pickup"],
         logs: ["logs", "activity", "happened", "history", "alerts"],
         fleet: ["fleet", "truck", "vehicle", "status", "tracking"],
-        drivers: ["driver", "rating", "trip", "available"],
+        drivers: ["driver", "rating", "trip", "active", "inactive"],
         payments: ["payment", "invoice", "money", "transaction", "billing"],
         reroutes: ["reroute", "divert", "change route"]
     };

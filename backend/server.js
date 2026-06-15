@@ -38,6 +38,14 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.use(express.json());
 
+// ── Google API Routes ────────────────────────────────────────────────────────
+const speechRoutes = require('./routes/speechRoutes');
+const translationRoutes = require('./routes/translationRoutes');
+const visionRoutes = require('./routes/visionRoutes');
+app.use('/api/speech', speechRoutes);
+app.use('/api/translate', translationRoutes);
+app.use('/api/vision', visionRoutes);
+
 // ── Razorpay instance ────────────────────────────────────────────────────────
 const razorpay = new Razorpay({
   key_id: process.env.RAZORPAY_KEY_ID,
@@ -48,7 +56,7 @@ const razorpay = new Razorpay({
 const generateInvoiceNumber = () => {
   const now = new Date();
   const year = now.getFullYear();
-  const ms   = Date.now().toString().slice(-6); // last 6 digits of timestamp
+  const ms = Date.now().toString().slice(-6); // last 6 digits of timestamp
   return `INV-${year}-${ms}`;
 };
 
@@ -76,7 +84,7 @@ app.post("/api/payment/assign-amount", async (req, res) => {
 
     const { error } = await supabase
       .from("Load")
-      .update({ assigned_amount: parsedAmount })
+      .update({ buyer_amount: parsedAmount })
       .eq("load_id", load_id);
 
     if (error) {
@@ -84,7 +92,7 @@ app.post("/api/payment/assign-amount", async (req, res) => {
       return res.status(500).json({ error: error.message });
     }
 
-    res.json({ success: true, load_id, assigned_amount: parsedAmount });
+    res.json({ success: true, load_id, buyer_amount: parsedAmount });
   } catch (err) {
     console.error("ASSIGN AMOUNT EXCEPTION:", err);
     res.status(500).json({ error: err.message });
@@ -166,12 +174,12 @@ app.post("/api/payment/verify", async (req, res) => {
     const invoiceNumber = generateInvoiceNumber();
 
     const { error: invError } = await supabase.from("invoices").insert([{
-      load_id:              order_id || null,
-      buyer_id:             user_id  || null,
+      load_id: order_id || null,
+      buyer_id: user_id || null,
       razorpay_order_id,
       razorpay_payment_id,
       amount,
-      invoice_number:       invoiceNumber,
+      invoice_number: invoiceNumber,
     }]);
 
     if (invError) {
@@ -182,8 +190,8 @@ app.post("/api/payment/verify", async (req, res) => {
     // ── Step 4: Update Load row status (non-fatal if it fails) ──────────────
     if (order_id) {
       const updatePayload = {
-        status:          "Confirmed",
-        payment_status:  "paid"
+        status: "Confirmed",
+        payment_status: "paid"
       };
 
       const { error: loadError } = await supabase
@@ -237,7 +245,7 @@ app.post("/api/warehouse/reroute", async (req, res) => {
         .select("name")
         .eq("id", toWarehouseId)
         .single();
-      
+
       if (whData?.name) {
         const { error: loadError } = await supabase
           .from("Load")
@@ -258,9 +266,9 @@ app.post("/api/warehouse/reroute", async (req, res) => {
     const { error: rerouteError } = await supabase
       .from("truck_reroutes")
       .insert([{
-        fleet_id:          validFleetId,
+        fleet_id: validFleetId,
         from_warehouse_id: fromWarehouseId,
-        to_warehouse_id:   toWarehouseId,
+        to_warehouse_id: toWarehouseId,
         reason,
       }]);
 
@@ -271,8 +279,8 @@ app.post("/api/warehouse/reroute", async (req, res) => {
       .from("warehouse_logs")
       .insert([{
         warehouse_id: fromWarehouseId,
-        event_type:   "reroute",
-        message:      `Truck ${truckId} rerouted to ${toWarehouseId}. Reason: ${reason}`,
+        event_type: "reroute",
+        message: `Truck ${truckId} rerouted to ${toWarehouseId}. Reason: ${reason}`,
       }]);
 
     if (logError) throw logError;
@@ -383,7 +391,7 @@ app.post("/api/driver/onboard", async (req, res) => {
     }
 
     // 2. Upsert driver table
-    if (licenseNumber !== undefined || verificationStatus !== undefined || fullName !== undefined) {
+    if (licenseNumber !== undefined || verificationStatus !== undefined || fullName !== undefined || status !== undefined) {
       // First check if driver already exists to preserve fields
       const { data: existingDriver } = await supabase
         .from("driver")
@@ -647,18 +655,18 @@ async function getCoords(locationStr) {
   if (!locationStr) return null;
   const cleanedStr = locationStr.trim();
   const lowerStr = cleanedStr.toLowerCase();
-  
+
   // 1. Parse coordinate strings like "12.9716, 77.5946" or "12.9716 77.5946"
   const coordRegex = /^\s*(-?\d+(?:\.\d+)?)\s*[\s,]\s*(-?\d+(?:\.\d+)?)\s*$/;
   const match = cleanedStr.match(coordRegex);
   if (match) {
     return [parseFloat(match[1]), parseFloat(match[2])];
   }
-  
+
   // 2. Check cache
   const cached = geocodeCache.get(lowerStr);
   if (cached) return cached;
-  
+
   // 3. Database lookup for warehouse names
   // Extract main name in case of "Central Warehouse – Bangalore"
   const cleanName = cleanedStr.split(/[–-]/)[0].trim();
@@ -676,7 +684,7 @@ async function getCoords(locationStr) {
   } catch (e) {
     console.warn("DB warehouse check bypassed or failed:", e.message);
   }
-  
+
   // 4. Geocode using Nominatim API
   const query = cleanedStr.toLowerCase().includes("india") ? cleanedStr : `${cleanedStr}, India`;
   const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(query)}`;
@@ -695,7 +703,7 @@ async function getCoords(locationStr) {
   } catch (err) {
     console.error("Nominatim geocoding error:", err.message);
   }
-  
+
   // 5. Fallback dictionary for major hubs
   if (lowerStr.includes("mumbai")) return [19.0760, 72.8777];
   if (lowerStr.includes("pune")) return [18.5204, 73.8567];
@@ -706,7 +714,7 @@ async function getCoords(locationStr) {
   if (lowerStr.includes("kolkata")) return [22.5726, 88.3639];
   if (lowerStr.includes("ahmedabad")) return [23.0225, 72.5714];
   if (lowerStr.includes("jaipur")) return [26.9124, 75.7873];
-  
+
   return null;
 }
 
@@ -717,57 +725,57 @@ app.get("/api/route/optimize", async (req, res) => {
     if (!pickup || !drop) {
       return res.status(400).json({ error: "pickup and drop query parameters are required" });
     }
-    
+
     const pickupCoords = await getCoords(pickup);
     const dropCoords = await getCoords(drop);
-    
+
     if (!pickupCoords || !dropCoords) {
       return res.status(404).json({ error: "Failed to resolve coordinates for pickup or drop location." });
     }
-    
+
     // OSRM expects coordinates as lon,lat;lon,lat
     const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${pickupCoords[1]},${pickupCoords[0]};${dropCoords[1]},${dropCoords[0]}?overview=full&geometries=geojson`;
-    
+
     const osrmRes = await fetch(osrmUrl);
     const osrmData = await osrmRes.json();
-    
+
     if (osrmData.code !== 'Ok' || !osrmData.routes || osrmData.routes.length === 0) {
       return res.status(502).json({ error: "Failed to calculate road route from routing engine." });
     }
-    
+
     const route = osrmData.routes[0];
     const distanceKm = route.distance / 1000;
-    
+
     // Practical Commercial Truck speed including mandatory rests & border stops: 40 km/h average
     const TRUCK_SPEED_KMH = 40.0;
     const durationSec = (distanceKm / TRUCK_SPEED_KMH) * 3600;
-    
+
     // Constants for calculations
     const FUEL_PRICE = 95.0; // INR per liter
     const FUEL_EFFICIENCY = 4.0; // km per liter
     const CO2_COEFFICIENT = 2.68; // kg CO2 per liter
-    
+
     // Optimized stats
     const optDistance = distanceKm;
     const optDuration = durationSec;
     const optFuel = optDistance / FUEL_EFFICIENCY;
     const optCost = optFuel * FUEL_PRICE;
     const optCO2 = optFuel * CO2_COEFFICIENT;
-    
+
     // Naive baseline (Simulated standard route: +25% distance, +40% duration)
     const naiveDistance = optDistance * 1.25;
     const naiveDuration = optDuration * 1.40;
     const naiveFuel = naiveDistance / FUEL_EFFICIENCY;
     const naiveCost = naiveFuel * FUEL_PRICE;
     const naiveCO2 = naiveFuel * CO2_COEFFICIENT;
-    
+
     // Savings
     const savingsDistance = naiveDistance - optDistance;
     const savingsDuration = naiveDuration - optDuration;
     const savingsFuel = naiveFuel - optFuel;
     const savingsCost = naiveCost - optCost;
     const savingsCO2 = naiveCO2 - optCO2;
-    
+
     res.json({
       success: true,
       pickup: { name: pickup, coords: pickupCoords },
@@ -795,9 +803,353 @@ app.get("/api/route/optimize", async (req, res) => {
         co2_kg: savingsCO2
       }
     });
-    
+
   } catch (err) {
     console.error("Route optimization endpoint exception:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// DRIVER FATIGUE & DUTY-TIME ENFORCEMENT ENDPOINTS
+// ════════════════════════════════════════════════════════════════════════════
+
+// ────────────────────────────────────────────────────────────────────────────
+// POST /api/driver/start-journey
+// Driver starts a trip. Creates a duty session and auto-generates checkpoints
+// along the route every ~160 km (4h @ 40 km/h).
+// Body: { driver_id, load_id, pickup, drop }
+// ────────────────────────────────────────────────────────────────────────────
+app.post("/api/driver/start-journey", async (req, res) => {
+  try {
+    const { driver_id, load_id, pickup, drop } = req.body;
+    if (!driver_id || !load_id) {
+      return res.status(400).json({ error: "driver_id and load_id are required" });
+    }
+
+    // 1. Check for an existing active session today to avoid duplicates
+    const today = new Date().toISOString().slice(0, 10);
+    const { data: existing } = await supabase
+      .from("driver_duty_sessions")
+      .select("id, status")
+      .eq("driver_id", driver_id)
+      .eq("load_id", load_id)
+      .eq("session_date", today)
+      .maybeSingle();
+
+    let sessionId;
+    if (existing) {
+      if (existing.status === "active" || existing.status === "resting") {
+        // Return existing session
+        sessionId = existing.id;
+      } else {
+        // Reset a completed/breached session for new day
+        const { data: reset, error: resetErr } = await supabase
+          .from("driver_duty_sessions")
+          .update({ status: "active", started_at: new Date().toISOString(), total_drive_minutes: 0 })
+          .eq("id", existing.id)
+          .select("id")
+          .single();
+        if (resetErr) throw resetErr;
+        sessionId = reset.id;
+      }
+    } else {
+      // 2. Create new duty session
+      const { data: session, error: sessErr } = await supabase
+        .from("driver_duty_sessions")
+        .insert({
+          driver_id,
+          load_id,
+          session_date: today,
+          started_at: new Date().toISOString(),
+          total_drive_minutes: 0,
+          status: "active"
+        })
+        .select("id")
+        .single();
+      if (sessErr) throw sessErr;
+      sessionId = session.id;
+    }
+
+    // 3. Clean up and generate checkpoints if pickup/drop provided
+    if (pickup && drop) {
+      // Always delete existing checkpoints for this load and driver to avoid duplicates or stale data
+      await supabase
+        .from("driver_checkpoints")
+        .delete()
+        .eq("load_id", load_id)
+        .eq("driver_id", driver_id);
+
+      // Fetch route geometry from OSRM via existing route endpoint logic
+      const pickupCoords = await getCoords(pickup);
+      const dropCoords = await getCoords(drop);
+
+      if (pickupCoords && dropCoords) {
+        const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${pickupCoords[1]},${pickupCoords[0]};${dropCoords[1]},${dropCoords[0]}?overview=full&geometries=geojson&steps=false`;
+        let routeGeometry = null;
+        let totalDistanceKm = 0;
+        try {
+          const osrmRes = await fetch(osrmUrl);
+          const osrmData = await osrmRes.json();
+          if (osrmData.code === "Ok" && osrmData.routes?.length > 0) {
+            routeGeometry = osrmData.routes[0].geometry.coordinates; // [[lon,lat], ...]
+            totalDistanceKm = osrmData.routes[0].distance / 1000;
+          }
+        } catch (e) {
+          console.warn("OSRM checkpoint generation failed:", e.message);
+        }
+
+        // Place checkpoints every 160 km (4h driving), skip if route < 100km
+        const CHECKPOINT_INTERVAL_KM = 160;
+        const checkpointsToInsert = [];
+        if (totalDistanceKm >= 100) {
+          const numCheckpoints = Math.floor(totalDistanceKm / CHECKPOINT_INTERVAL_KM);
+          for (let i = 1; i <= numCheckpoints; i++) {
+            const fraction = (i * CHECKPOINT_INTERVAL_KM) / totalDistanceKm;
+            let cpLat = null, cpLng = null;
+            if (routeGeometry && routeGeometry.length > 0) {
+              const idx = Math.min(Math.floor(fraction * routeGeometry.length), routeGeometry.length - 1);
+              cpLng = routeGeometry[idx][0];
+              cpLat = routeGeometry[idx][1];
+            }
+            checkpointsToInsert.push({
+              load_id,
+              driver_id,
+              checkpoint_index: i,
+              label: `Rest Stop #${i}`,
+              approx_km: Math.round(i * CHECKPOINT_INTERVAL_KM),
+              approx_lat: cpLat,
+              approx_lng: cpLng,
+            });
+          }
+
+          if (checkpointsToInsert.length > 0) {
+            const { error: cpErr } = await supabase
+              .from("driver_checkpoints")
+              .insert(checkpointsToInsert);
+            if (cpErr) console.warn("Checkpoint insert warn:", cpErr.message);
+          }
+        }
+      }
+    }
+
+    // 4. Fetch checkpoints to return
+    const { data: checkpoints } = await supabase
+      .from("driver_checkpoints")
+      .select("*")
+      .eq("load_id", load_id)
+      .eq("driver_id", driver_id)
+      .order("checkpoint_index", { ascending: true });
+
+    // 5. Mark load as running
+    await supabase.from("Load").update({ status: "Running" }).eq("load_id", load_id);
+
+    res.json({ success: true, session_id: sessionId, checkpoints: checkpoints || [] });
+  } catch (err) {
+    console.error("START JOURNEY ERROR:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// GET /api/driver/duty-status
+// Returns today's duty session and checkpoints for a driver.
+// Query: driver_id, load_id (optional)
+// ────────────────────────────────────────────────────────────────────────────
+app.get("/api/driver/duty-status", async (req, res) => {
+  try {
+    const { driver_id, load_id } = req.query;
+    if (!driver_id) return res.status(400).json({ error: "driver_id is required" });
+
+    const today = new Date().toISOString().slice(0, 10);
+    let sessionQuery = supabase
+      .from("driver_duty_sessions")
+      .select("*")
+      .eq("driver_id", driver_id)
+      .eq("session_date", today)
+      .order("created_at", { ascending: false })
+      .limit(1);
+
+    if (load_id) sessionQuery = sessionQuery.eq("load_id", load_id);
+
+    const { data: sessions } = await sessionQuery;
+    const session = sessions?.[0] || null;
+
+    let checkpoints = [];
+    if (session?.load_id || load_id) {
+      const targetLoadId = load_id || session?.load_id;
+      const { data: cps } = await supabase
+        .from("driver_checkpoints")
+        .select("*")
+        .eq("load_id", targetLoadId)
+        .eq("driver_id", driver_id)
+        .order("checkpoint_index", { ascending: true });
+      checkpoints = cps || [];
+    }
+
+    res.json({ session, checkpoints });
+  } catch (err) {
+    console.error("DUTY STATUS ERROR:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// POST /api/driver/update-drive-time
+// Sync drive minutes from frontend timer. Flags status to 'resting' at 480m.
+// Body: { driver_id, load_id, total_drive_minutes }
+// ────────────────────────────────────────────────────────────────────────────
+app.post("/api/driver/update-drive-time", async (req, res) => {
+  try {
+    const { driver_id, load_id, total_drive_minutes } = req.body;
+    if (!driver_id || total_drive_minutes === undefined) {
+      return res.status(400).json({ error: "driver_id and total_drive_minutes are required" });
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+    const newStatus = total_drive_minutes >= 480 ? "resting" : "active";
+
+    let query = supabase
+      .from("driver_duty_sessions")
+      .update({ total_drive_minutes, status: newStatus })
+      .eq("driver_id", driver_id)
+      .eq("session_date", today);
+
+    if (load_id) query = query.eq("load_id", load_id);
+
+    const { error } = await query;
+    if (error) throw error;
+
+    res.json({ success: true, status: newStatus });
+  } catch (err) {
+    console.error("UPDATE DRIVE TIME ERROR:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// POST /api/driver/checkin-checkpoint
+// Driver checks in at a checkpoint (marks reached_at = now).
+// Body: { checkpoint_id }
+// ────────────────────────────────────────────────────────────────────────────
+app.post("/api/driver/checkin-checkpoint", async (req, res) => {
+  try {
+    const { checkpoint_id } = req.body;
+    if (!checkpoint_id) return res.status(400).json({ error: "checkpoint_id is required" });
+
+    const { error } = await supabase
+      .from("driver_checkpoints")
+      .update({ reached_at: new Date().toISOString() })
+      .eq("id", checkpoint_id);
+
+    if (error) throw error;
+    res.json({ success: true });
+  } catch (err) {
+    console.error("CHECKIN CHECKPOINT ERROR:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// POST /api/driver/report-breach
+// Logs a fatigue rule violation. Also marks session as 'breached'.
+// Body: { driver_id, load_id, seller_id, drive_minutes_at_breach, gps_lat?, gps_lng? }
+// ────────────────────────────────────────────────────────────────────────────
+app.post("/api/driver/report-breach", async (req, res) => {
+  try {
+    let { driver_id, load_id, seller_id, drive_minutes_at_breach, gps_lat, gps_lng } = req.body;
+    if (!driver_id) return res.status(400).json({ error: "driver_id is required" });
+
+    // Lookup seller_id if missing
+    if (!seller_id && load_id) {
+      const { data: loadData } = await supabase.from('Load').select('seller_id').eq('load_id', load_id).single();
+      if (loadData && loadData.seller_id) {
+        seller_id = loadData.seller_id;
+      }
+    }
+
+    // 1. Insert breach log
+    const { error: breachErr } = await supabase
+      .from("driver_breach_logs")
+      .insert({
+        driver_id,
+        load_id: load_id || null,
+        seller_id: seller_id || null,
+        drive_minutes_at_breach: drive_minutes_at_breach || 0,
+        gps_lat: gps_lat || null,
+        gps_lng: gps_lng || null,
+        penalty_amount: 500
+      });
+    if (breachErr) throw breachErr;
+
+    // 2. Mark session as breached
+    const today = new Date().toISOString().slice(0, 10);
+    await supabase
+      .from("driver_duty_sessions")
+      .update({ status: "breached" })
+      .eq("driver_id", driver_id)
+      .eq("session_date", today);
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("REPORT BREACH ERROR:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// GET /api/seller/breach-alerts
+// Returns unacknowledged breach alerts for loads owned by seller.
+// Query: seller_id
+// ────────────────────────────────────────────────────────────────────────────
+app.get("/api/seller/breach-alerts", async (req, res) => {
+  try {
+    const { seller_id } = req.query;
+    if (!seller_id) return res.status(400).json({ error: "seller_id is required" });
+
+    const { data, error } = await supabase
+      .from("driver_breach_logs")
+      .select(`
+        id,
+        breach_at,
+        drive_minutes_at_breach,
+        gps_lat,
+        gps_lng,
+        penalty_amount,
+        acknowledged_by_seller,
+        load_id,
+        driver:profiles!driver_id(full_name, email)
+      `)
+      .eq("seller_id", seller_id)
+      .order("breach_at", { ascending: false });
+
+    if (error) throw error;
+    res.json({ alerts: data || [] });
+  } catch (err) {
+    console.error("BREACH ALERTS ERROR:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// POST /api/seller/acknowledge-breach
+// Seller marks a breach alert as read.
+// Body: { breach_id }
+// ────────────────────────────────────────────────────────────────────────────
+app.post("/api/seller/acknowledge-breach", async (req, res) => {
+  try {
+    const { breach_id } = req.body;
+    if (!breach_id) return res.status(400).json({ error: "breach_id is required" });
+
+    const { error } = await supabase
+      .from("driver_breach_logs")
+      .update({ acknowledged_by_seller: true })
+      .eq("id", breach_id);
+
+    if (error) throw error;
+    res.json({ success: true });
+  } catch (err) {
+    console.error("ACKNOWLEDGE BREACH ERROR:", err);
     res.status(500).json({ error: err.message });
   }
 });

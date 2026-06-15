@@ -43,8 +43,7 @@ const DriverSidebar = () => {
   const navLinks = [
     { to: "/driver/hub", label: 'Driver Hub' },
     { to: "/orders", label: 'Assigned Loads' },
-    { to: "/map", label: 'Tracking' },
-    { to: "/driver/earnings", label: 'Earnings' }
+    { to: "/ai-assistance", label: 'AI Assistant' }
   ];
 
   return (

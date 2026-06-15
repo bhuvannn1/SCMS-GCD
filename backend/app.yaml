@@ -1,0 +1,10 @@
+runtime: nodejs22
+instance_class: F1
+automatic_scaling:
+  max_instances: 1
+env_variables:
+  RAZORPAY_KEY_ID: "rzp_test_Si7muEw1pbvVFT"
+  RAZORPAY_KEY_SECRET: "VtiQpG0aOPvMy6zUSEnUz9D6"
+  SUPABASE_URL: "https://xpjomwvpnbaxshujrmmg.supabase.co"
+  SUPABASE_SERVICE_ROLE_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhwam9td3ZwbmJheHNodWpybW1nIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NzExMTQ0NCwiZXhwIjoyMDkyNjg3NDQ0fQ.ymY-ps-tT8eLX_ULRcgrva-MdkmB3tRv60xOQsubm4w"
+  FRONTEND_URL: "https://scms-live-499516.web.app"

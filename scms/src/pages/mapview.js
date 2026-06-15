@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from "react"
-import { User, Phone, MapPin, Tag, CheckCircle, XCircle, Route, TrendingUp, Leaf, Loader2, Compass } from 'lucide-react';
+import { User, Phone, MapPin, Tag, CheckCircle, XCircle, Route, TrendingUp, Leaf, Loader2, Compass, AlertTriangle, ShieldAlert, Search, ArrowUpDown, Filter } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from "react-leaflet"
 import L from "leaflet"
 import supabase from "../config/SupabaseClient"
@@ -69,6 +69,34 @@ const createPinIcon = (color) => new L.divIcon({
 const pickupIcon = createPinIcon('#22c55e'); // Green
 const dropIcon = createPinIcon('#ef4444'); // Red
 
+// Breach marker icon (pulsing red alert)
+const createBreachIcon = () => new L.divIcon({
+    className: 'custom-breach-marker',
+    html: `
+        <div style="
+            background-color: #fef2f2;
+            border: 2.5px solid #ef4444;
+            border-radius: 50%;
+            width: 36px;
+            height: 36px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
+            animation: pulse-breach 1.5s infinite;
+        ">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"></path>
+                <path d="M12 9v4"></path>
+                <path d="M12 17h.01"></path>
+            </svg>
+        </div>
+    `,
+    iconSize: [36, 36],
+    iconAnchor: [18, 18],
+    popupAnchor: [0, -18]
+});
+
 // Component to dynamically fit route bounds
 const MapBoundsAdjuster = ({ coords }) => {
     const map = useMap();
@@ -85,6 +113,57 @@ const MapView = () => {
     const [fleet, setFleet] = useState([])
     const [activeLoads, setActiveLoads] = useState([])
     const [selectedLoad, setSelectedLoad] = useState(null)
+    const [breachAlerts, setBreachAlerts] = useState([])
+
+    // Search, Sort, Filter States
+    const [searchQuery, setSearchQuery] = useState('')
+    const [sortBy, setSortBy] = useState('customer') // 'customer' | 'load_id' | 'pickup' | 'drop'
+    const [sortOrder, setSortOrder] = useState('asc') // 'asc' | 'desc'
+    const [driverFilter, setDriverFilter] = useState('all') // 'all' | 'assigned' | 'unassigned'
+
+    const filteredActiveLoads = activeLoads.filter(load => {
+        const q = searchQuery.toLowerCase();
+        const matchesSearch = 
+            (load.customer && load.customer.toLowerCase().includes(q)) ||
+            (load.load_id && load.load_id.toLowerCase().includes(q)) ||
+            (load.pickup && load.pickup.toLowerCase().includes(q)) ||
+            (load.drop && load.drop.toLowerCase().includes(q)) ||
+            (load.driver?.full_name && load.driver.full_name.toLowerCase().includes(q)) ||
+            (load.fleet?.vehicle_number && load.fleet.vehicle_number.toLowerCase().includes(q));
+            
+        const matchesDriver = driverFilter === 'all' ||
+            (driverFilter === 'assigned' && load.driver?.full_name && load.driver.full_name !== 'None') ||
+            (driverFilter === 'unassigned' && (!load.driver?.full_name || load.driver.full_name === 'None' || load.driver.full_name === ''));
+            
+        return matchesSearch && matchesDriver;
+    });
+
+    const sortedActiveLoads = [...filteredActiveLoads].sort((a, b) => {
+        let valA = a[sortBy] || '';
+        let valB = b[sortBy] || '';
+        
+        if (sortBy === 'customer') {
+            valA = a.customer || '';
+            valB = b.customer || '';
+        } else if (sortBy === 'load_id') {
+            valA = a.load_id || '';
+            valB = b.load_id || '';
+        } else if (sortBy === 'pickup') {
+            valA = a.pickup || '';
+            valB = b.pickup || '';
+        } else if (sortBy === 'drop') {
+            valA = a.drop || '';
+            valB = b.drop || '';
+        }
+
+        if (typeof valA === 'string') {
+            return sortOrder === 'asc' 
+                ? valA.localeCompare(valB) 
+                : valB.localeCompare(valA);
+        } else {
+            return sortOrder === 'asc' ? (valA > valB ? 1 : -1) : (valB > valA ? 1 : -1);
+        }
+    });
     
     const [routeData, setRouteData] = useState(null)
     const [routeLoading, setRouteLoading] = useState(false)
@@ -203,11 +282,35 @@ const MapView = () => {
             return;
         }
         setActiveLoads(data || []);
+
+        // Auto-select load from URL query param
+        const queryParams = new URLSearchParams(window.location.search);
+        const loadIdFromUrl = queryParams.get('loadId');
+        if (loadIdFromUrl && data) {
+            const matchingLoad = data.find(l => l.load_id === loadIdFromUrl);
+            if (matchingLoad) {
+                // Call handleSelectLoad to load routing data and zoom
+                handleSelectLoad(matchingLoad);
+            }
+        }
+    }
+
+    const fetchBreachAlerts = async () => {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session?.user) return;
+        try {
+            const res = await fetch(`${API_BASE}/api/seller/breach-alerts?seller_id=${session.user.id}`);
+            const data = await res.json();
+            setBreachAlerts((data.alerts || []).filter(a => !a.acknowledged_by_seller));
+        } catch (e) {
+            console.warn('Map breach alerts fetch failed:', e.message);
+        }
     }
 
     useEffect(() => {
         fetchFleetLocations()
         fetchActiveLoads()
+        fetchBreachAlerts()
         
         // Supabase Realtime WebSocket channel subscription
         const channel = supabase
@@ -242,6 +345,7 @@ const MapView = () => {
         const interval = setInterval(() => {
             fetchFleetLocations()
             fetchActiveLoads()
+            fetchBreachAlerts()
         }, 30000)
         
         return () => {
@@ -388,6 +492,40 @@ const MapView = () => {
                             {activeLoads.length} Running
                         </span>
                     </h3>
+
+                    {breachAlerts.length > 0 && !selectedLoad && (
+                        <div style={{
+                            padding: '12px', background: 'rgba(239,68,68,0.06)', 
+                            border: '1px solid rgba(239,68,68,0.2)', borderRadius: '12px',
+                            display: 'flex', flexDirection: 'column', gap: '8px',
+                            animation: 'pulse-bg 2s infinite'
+                        }}>
+                            <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#ef4444', display: 'flex', alignItems: 'center', gap: '6px', textTransform: 'uppercase' }}>
+                                <ShieldAlert size={14} /> Critical Alerts ({breachAlerts.length})
+                            </div>
+                            {breachAlerts.map(alert => (
+                                <div key={alert.id} style={{ fontSize: '0.75rem', color: '#7f1d1d', background: 'white', padding: '8px', borderRadius: '8px', border: '1px solid #fca5a5' }}>
+                                    <strong>{alert.driver?.full_name || 'Driver'}</strong> exceeded 8h limit.
+                                    <br />
+                                    Drove for {Math.floor(alert.drive_minutes_at_breach/60)}h {alert.drive_minutes_at_breach%60}m.
+                                    <div style={{ marginTop: '6px' }}>
+                                        <button 
+                                            onClick={async () => {
+                                                await fetch(`${API_BASE}/api/seller/acknowledge-breach`, {
+                                                    method: 'POST',
+                                                    headers: { 'Content-Type': 'application/json' },
+                                                    body: JSON.stringify({ breach_id: alert.id })
+                                                });
+                                                setBreachAlerts(prev => prev.filter(a => a.id !== alert.id));
+                                            }}
+                                            style={{ background: '#ef4444', color: 'white', border: 'none', padding: '4px 8px', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 'bold', cursor: 'pointer' }}>
+                                            Dismiss Alert
+                                        </button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
 
                     {selectedLoad ? (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
@@ -581,57 +719,144 @@ const MapView = () => {
                             </button>
                         </div>
                     ) : (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', flex: 1, overflowY: 'auto', paddingRight: '2px' }}>
-                            {activeLoads.length === 0 ? (
-                                <div style={{ padding: '30px 10px', textAlign: 'center', color: '#64748b', fontSize: '0.88rem', fontStyle: 'italic' }}>
-                                    No active shipments are currently running on route.
-                                </div>
-                            ) : (
-                                activeLoads.map((load) => (
-                                    <div
-                                        key={load.load_id}
-                                        onClick={() => handleSelectLoad(load)}
+                        <>
+                            {/* Search, Sort, Filter Panel */}
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', paddingBottom: '12px', borderBottom: '1px solid var(--border-color, #e2e8f0)' }}>
+                                {/* Search Input */}
+                                <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                                    <input 
+                                        type="text" 
+                                        placeholder="Search active shipments..." 
+                                        value={searchQuery}
+                                        onChange={e => setSearchQuery(e.target.value)}
                                         style={{
-                                            padding: '14px',
-                                            background: 'var(--bg-primary, #f8fafc)',
+                                            width: '100%',
+                                            padding: '8px 12px 8px 32px',
+                                            borderRadius: '10px',
                                             border: '1px solid var(--border-color, #e2e8f0)',
-                                            borderRadius: '14px',
-                                            cursor: 'pointer',
-                                            transition: 'all 0.15s',
-                                            display: 'flex',
-                                            flexDirection: 'column',
-                                            gap: '6px'
+                                            background: 'var(--bg-input, #f8fafc)',
+                                            fontSize: '0.85rem',
+                                            outline: 'none'
                                         }}
-                                        className="active-shipment-card"
+                                    />
+                                    <Search size={14} style={{ position: 'absolute', left: '10px', color: '#94a3b8' }} />
+                                </div>
+                                
+                                {/* Sort & Filter Controls */}
+                                <div style={{ display: 'flex', gap: '6px' }}>
+                                    <select
+                                        value={sortBy}
+                                        onChange={e => setSortBy(e.target.value)}
+                                        style={{
+                                            flex: 1.2,
+                                            padding: '6px 10px',
+                                            borderRadius: '8px',
+                                            border: '1px solid var(--border-color, #e2e8f0)',
+                                            background: 'var(--bg-card, #fff)',
+                                            fontSize: '0.78rem',
+                                            color: 'var(--text-primary, #475569)',
+                                            fontWeight: 600,
+                                            cursor: 'pointer'
+                                        }}
                                     >
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                            <span style={{ fontWeight: 800, fontSize: '0.88rem', color: 'var(--text-primary, #0f172a)' }}>{load.customer}</span>
-                                            <span style={{ 
-                                                fontSize: '0.72rem', 
-                                                color: '#f97316', 
-                                                fontWeight: 800, 
-                                                background: 'rgba(249,115,22,0.1)', 
-                                                padding: '2px 8px', 
-                                                borderRadius: '8px' 
-                                            }}>
-                                                #{load.fleet?.vehicle_number || 'N/A'}
-                                            </span>
-                                        </div>
-                                        <div style={{ fontSize: '0.78rem', color: '#64748b', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                            <MapPin size={12} style={{ color: '#94a3b8' }} />
-                                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{load.pickup} → {load.drop}</span>
-                                        </div>
-                                        <div style={{ fontSize: '0.72rem', color: '#94a3b8', display: 'flex', justifyContent: 'space-between', marginTop: '4px', borderTop: '1px dashed var(--border-color, #e2e8f0)', paddingTop: '6px' }}>
-                                            <span>Driver: {load.driver?.full_name || 'None'}</span>
-                                            <span style={{ color: '#22c55e', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '3px' }}>
-                                                <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#22c55e', display: 'inline-block' }}></span>
-                                                Running
-                                            </span>
-                                        </div>
+                                        <option value="customer">Sort: Customer</option>
+                                        <option value="load_id">Sort: Order Ref</option>
+                                        <option value="pickup">Sort: Pickup</option>
+                                        <option value="drop">Sort: Drop</option>
+                                    </select>
+
+                                    <button
+                                        onClick={() => setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc')}
+                                        style={{
+                                            padding: '6px 10px',
+                                            borderRadius: '8px',
+                                            border: '1px solid var(--border-color, #e2e8f0)',
+                                            background: 'var(--bg-card, #fff)',
+                                            cursor: 'pointer',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center'
+                                        }}
+                                        title={sortOrder === 'asc' ? 'Ascending (A-Z)' : 'Descending (Z-A)'}
+                                    >
+                                        <ArrowUpDown size={14} color="#64748b" />
+                                    </button>
+
+                                    <select
+                                        value={driverFilter}
+                                        onChange={e => setDriverFilter(e.target.value)}
+                                        style={{
+                                            flex: 1,
+                                            padding: '6px 10px',
+                                            borderRadius: '8px',
+                                            border: '1px solid var(--border-color, #e2e8f0)',
+                                            background: 'var(--bg-card, #fff)',
+                                            fontSize: '0.78rem',
+                                            color: 'var(--text-primary, #475569)',
+                                            fontWeight: 600,
+                                            cursor: 'pointer'
+                                        }}
+                                    >
+                                        <option value="all">All Drivers</option>
+                                        <option value="assigned">Assigned</option>
+                                        <option value="unassigned">Unassigned</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            {/* Active Shipments List */}
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', flex: 1, overflowY: 'auto', paddingRight: '2px', marginTop: '4px' }}>
+                                {sortedActiveLoads.length === 0 ? (
+                                    <div style={{ padding: '30px 10px', textAlign: 'center', color: '#64748b', fontSize: '0.88rem', fontStyle: 'italic' }}>
+                                        {activeLoads.length === 0 ? 'No active shipments are currently running on route.' : 'No matching shipments found.'}
                                     </div>
-                                ))
-                            )}
-                        </div>
+                                ) : (
+                                    sortedActiveLoads.map((load) => (
+                                        <div
+                                            key={load.load_id}
+                                            onClick={() => handleSelectLoad(load)}
+                                            style={{
+                                                padding: '14px',
+                                                background: 'var(--bg-primary, #f8fafc)',
+                                                border: '1px solid var(--border-color, #e2e8f0)',
+                                                borderRadius: '14px',
+                                                cursor: 'pointer',
+                                                transition: 'all 0.15s',
+                                                display: 'flex',
+                                                flexDirection: 'column',
+                                                gap: '6px'
+                                            }}
+                                            className="active-shipment-card"
+                                        >
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                <span style={{ fontWeight: 800, fontSize: '0.88rem', color: 'var(--text-primary, #0f172a)' }}>{load.customer}</span>
+                                                <span style={{ 
+                                                    fontSize: '0.72rem', 
+                                                    color: '#f97316', 
+                                                    fontWeight: 800, 
+                                                    background: 'rgba(249,115,22,0.1)', 
+                                                    padding: '2px 8px', 
+                                                    borderRadius: '8px' 
+                                                }}>
+                                                    #{load.fleet?.vehicle_number || 'N/A'}
+                                                </span>
+                                            </div>
+                                            <div style={{ fontSize: '0.78rem', color: '#64748b', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                <MapPin size={12} style={{ color: '#94a3b8' }} />
+                                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{load.pickup} → {load.drop}</span>
+                                            </div>
+                                            <div style={{ fontSize: '0.72rem', color: '#94a3b8', display: 'flex', justifyContent: 'space-between', marginTop: '4px', borderTop: '1px dashed var(--border-color, #e2e8f0)', paddingTop: '6px' }}>
+                                                <span>Driver: {load.driver?.full_name || 'None'}</span>
+                                                <span style={{ color: '#22c55e', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '3px' }}>
+                                                    <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#22c55e', display: 'inline-block' }}></span>
+                                                    Running
+                                                </span>
+                                            </div>
+                                        </div>
+                                    ))
+                                )}
+                            </div>
+                        </>
                     )}
                 </div>
 
@@ -792,6 +1017,38 @@ const MapView = () => {
                             );
                         })}
 
+                        {/* Breach Markers */}
+                        {breachAlerts.map(alert => {
+                            if (!alert.gps_lat || !alert.gps_lng) return null;
+                            return (
+                                <Marker 
+                                    key={alert.id} 
+                                    position={[alert.gps_lat, alert.gps_lng]} 
+                                    icon={createBreachIcon()}
+                                >
+                                    <Popup minWidth={220}>
+                                        <div style={{ fontFamily: "'Nunito', 'Inter', sans-serif" }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#ef4444', fontWeight: 900, fontSize: '0.9rem', marginBottom: '6px', borderBottom: '1px solid #fee2e2', paddingBottom: '6px' }}>
+                                                <AlertTriangle size={16} /> DRIVER FATIGUE BREACH
+                                            </div>
+                                            <div style={{ fontSize: '0.8rem', color: '#1e293b', marginBottom: '4px' }}>
+                                                <strong>Driver:</strong> {alert.driver?.full_name || 'Unknown'}
+                                            </div>
+                                            <div style={{ fontSize: '0.8rem', color: '#1e293b', marginBottom: '4px' }}>
+                                                <strong>Drive Time:</strong> {Math.floor(alert.drive_minutes_at_breach/60)}h {alert.drive_minutes_at_breach%60}m
+                                            </div>
+                                            <div style={{ fontSize: '0.75rem', color: '#64748b' }}>
+                                                Logged at: {new Date(alert.breach_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+                                            </div>
+                                            <div style={{ marginTop: '8px', background: '#fee2e2', color: '#ef4444', padding: '4px', borderRadius: '4px', textAlign: 'center', fontSize: '0.75rem', fontWeight: 700 }}>
+                                                Penalty Logged: ₹{alert.penalty_amount}
+                                            </div>
+                                        </div>
+                                    </Popup>
+                                </Marker>
+                            );
+                        })}
+
                     </MapContainer>
                 </div>
             </div>
@@ -801,6 +1058,16 @@ const MapView = () => {
                     0% { transform: scale(0.9); opacity: 0.8; }
                     50% { transform: scale(1.2); opacity: 1; }
                     100% { transform: scale(0.9); opacity: 0.8; }
+                }
+                @keyframes pulse-breach {
+                    0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+                    70% { box-shadow: 0 0 0 15px rgba(239, 68, 68, 0); }
+                    100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+                }
+                @keyframes pulse-bg {
+                    0% { background: rgba(239,68,68,0.06); }
+                    50% { background: rgba(239,68,68,0.12); }
+                    100% { background: rgba(239,68,68,0.06); }
                 }
             `}</style>
         </div>

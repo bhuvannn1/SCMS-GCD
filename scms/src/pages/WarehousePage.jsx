@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { AlertTriangle, TrendingUp, ShieldAlert, Activity, RefreshCw } from 'lucide-react';
+import { AlertTriangle, Activity, RefreshCw } from 'lucide-react';
 import supabase from '../config/SupabaseClient';
 import useWarehouseMonitor from '../hooks/useWarehouseMonitor';
 import WarehouseMap from '../components/WarehouseMap';
