@@ -24,6 +24,7 @@ const Payment = () => {
   const [pageLoading, setPageLoading] = useState(true);
   const [paymentState, setPaymentState] = useState("idle"); // idle | processing | success | failed
   const [paymentDetails, setPaymentDetails] = useState(null);
+  const [totalPaid, setTotalPaid] = useState(0);
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const orderId = searchParams.get("orderId");
@@ -44,6 +45,16 @@ const Payment = () => {
 
         if (!error && loadData) {
           setOrder(loadData);
+
+          // Fetch payments to calculate total paid amount so far
+          const { data: payData } = await supabase
+            .from("payments")
+            .select("amount")
+            .eq("order_id", orderId)
+            .eq("status", "success");
+
+          const paidSum = (payData || []).reduce((sum, p) => sum + (Number(p.amount) || 0), 0) / 100;
+          setTotalPaid(paidSum);
         }
       }
       setPageLoading(false);
@@ -51,12 +62,17 @@ const Payment = () => {
     init();
   }, [orderId]);
 
-  // Use seller-assigned amount. Falls back to null → blocks payment.
-  const assignedAmount = order?.assigned_amount ? parseFloat(order.assigned_amount) : null;
-  const displayAmount  = assignedAmount || 0;
+  // Use seller-assigned buyer amount. Falls back to null → blocks payment.
+  const buyerAmount = order?.buyer_amount ? parseFloat(order.buyer_amount) : null;
+  // If payment status is marked paid and we have no payments, treat as fully paid
+  const adjustedTotalPaid = (totalPaid === 0 && order?.payment_status === 'paid') ? (buyerAmount || 0) : totalPaid;
+  const balanceDue = buyerAmount !== null ? Math.max(0, buyerAmount - adjustedTotalPaid) : null;
+
+  const displayAmount  = balanceDue !== null ? balanceDue : 0;
   const taxAmount      = parseFloat((displayAmount * 0.18).toFixed(2));
   const subtotalAmount = parseFloat((displayAmount - taxAmount).toFixed(2));
-  const amountNotSet   = orderId && !pageLoading && order && !assignedAmount;
+  const amountNotSet   = orderId && !pageLoading && order && buyerAmount === null;
+  const alreadyPaidOff = orderId && !pageLoading && order && buyerAmount !== null && balanceDue === 0;
 
   const handlePayment = async () => {
     if (!user) { alert("User not loaded yet"); return; }
@@ -329,6 +345,22 @@ const Payment = () => {
                     </span>
                   </div>
                 )}
+                {buyerAmount !== null && (
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "10px", fontSize: "0.875rem" }}>
+                    <span style={{ color: "var(--text-secondary)" }}>Total Price</span>
+                    <span style={{ fontWeight: 600, color: "var(--text-primary)" }}>
+                      ₹{buyerAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                )}
+                {adjustedTotalPaid > 0 && (
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "10px", fontSize: "0.875rem" }}>
+                    <span style={{ color: "var(--text-secondary)" }}>Paid Amount</span>
+                    <span style={{ fontWeight: 600, color: "#10b981" }}>
+                      - ₹{adjustedTotalPaid.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                )}
                 <div style={{ height: "1px", background: "var(--border-color, #e2e8f0)", margin: "14px 0" }} />
               </>
             )}
@@ -373,31 +405,52 @@ const Payment = () => {
           </div>
         )}
 
+        {/* Already fully paid notice */}
+        {alreadyPaidOff && (
+          <div style={{
+            background: "rgba(16,185,129,0.1)",
+            border: "1.5px solid rgba(16,185,129,0.4)",
+            borderRadius: "10px",
+            padding: "12px 16px",
+            marginBottom: "16px",
+            fontSize: "0.85rem",
+            color: "#065f46",
+            fontWeight: 600,
+            display: "flex",
+            alignItems: "center",
+            gap: "8px",
+          }}>
+            <CheckCircle size={16} /> This order has already been fully paid. No further payments are required.
+          </div>
+        )}
+
         {/* Pay Button */}
         <button
           onClick={handlePayment}
-          disabled={loading || pageLoading || amountNotSet}
+          disabled={loading || pageLoading || amountNotSet || alreadyPaidOff}
           style={{
             width: "100%",
             padding: "14px",
             background: loading || amountNotSet
               ? "rgba(249,115,22,0.4)"
-              : "linear-gradient(135deg, #f97316 0%, #ea580c 100%)",
+              : alreadyPaidOff
+                ? "rgba(16,185,129,0.5)"
+                : "linear-gradient(135deg, #f97316 0%, #ea580c 100%)",
             color: "white",
             border: "none",
             borderRadius: "12px",
             fontSize: "1rem",
             fontWeight: 800,
-            cursor: loading || amountNotSet ? "not-allowed" : "pointer",
+            cursor: loading || amountNotSet || alreadyPaidOff ? "not-allowed" : "pointer",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
             gap: "10px",
             letterSpacing: "0.3px",
-            boxShadow: loading || amountNotSet ? "none" : "0 4px 16px rgba(249,115,22,0.35)",
+            boxShadow: loading || amountNotSet || alreadyPaidOff ? "none" : "0 4px 16px rgba(249,115,22,0.35)",
             transition: "all 0.2s",
           }}
-          onMouseEnter={e => { if (!loading && !amountNotSet) e.currentTarget.style.transform = "translateY(-1px)"; }}
+          onMouseEnter={e => { if (!loading && !amountNotSet && !alreadyPaidOff) e.currentTarget.style.transform = "translateY(-1px)"; }}
           onMouseLeave={e => { e.currentTarget.style.transform = "translateY(0)"; }}
         >
           {loading ? (
@@ -407,6 +460,8 @@ const Payment = () => {
             </>
           ) : amountNotSet ? (
             <><Clock size={16} /> Awaiting Seller to Set Amount</>
+          ) : alreadyPaidOff ? (
+            <><CheckCircle size={16} /> Order Fully Paid</>
           ) : (
             <><Lock size={16} /> Pay ₹{displayAmount.toLocaleString("en-IN")} via Razorpay</>
           )}

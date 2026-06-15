@@ -76,7 +76,7 @@ app.post("/api/payment/assign-amount", async (req, res) => {
 
     const { error } = await supabase
       .from("Load")
-      .update({ assigned_amount: parsedAmount })
+      .update({ buyer_amount: parsedAmount })
       .eq("load_id", load_id);
 
     if (error) {
@@ -84,7 +84,7 @@ app.post("/api/payment/assign-amount", async (req, res) => {
       return res.status(500).json({ error: error.message });
     }
 
-    res.json({ success: true, load_id, assigned_amount: parsedAmount });
+    res.json({ success: true, load_id, buyer_amount: parsedAmount });
   } catch (err) {
     console.error("ASSIGN AMOUNT EXCEPTION:", err);
     res.status(500).json({ error: err.message });
@@ -383,7 +383,7 @@ app.post("/api/driver/onboard", async (req, res) => {
     }
 
     // 2. Upsert driver table
-    if (licenseNumber !== undefined || verificationStatus !== undefined || fullName !== undefined) {
+    if (licenseNumber !== undefined || verificationStatus !== undefined || fullName !== undefined || status !== undefined) {
       // First check if driver already exists to preserve fields
       const { data: existingDriver } = await supabase
         .from("driver")
@@ -863,64 +863,63 @@ app.post("/api/driver/start-journey", async (req, res) => {
       sessionId = session.id;
     }
 
-    // 3. Generate checkpoints if pickup/drop provided and none exist
+    // 3. Clean up and generate checkpoints if pickup/drop provided
     if (pickup && drop) {
-      const { count: existingCps } = await supabase
+      // Always delete existing checkpoints for this load and driver to avoid duplicates or stale data
+      await supabase
         .from("driver_checkpoints")
-        .select("id", { count: "exact", head: true })
+        .delete()
         .eq("load_id", load_id)
         .eq("driver_id", driver_id);
 
-      if (!existingCps || existingCps === 0) {
-        // Fetch route geometry from OSRM via existing route endpoint logic
-        const pickupCoords = await getCoords(pickup);
-        const dropCoords = await getCoords(drop);
+      // Fetch route geometry from OSRM via existing route endpoint logic
+      const pickupCoords = await getCoords(pickup);
+      const dropCoords = await getCoords(drop);
 
-        if (pickupCoords && dropCoords) {
-          const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${pickupCoords[1]},${pickupCoords[0]};${dropCoords[1]},${dropCoords[0]}?overview=full&geometries=geojson&steps=false`;
-          let routeGeometry = null;
-          let totalDistanceKm = 0;
-          try {
-            const osrmRes = await fetch(osrmUrl);
-            const osrmData = await osrmRes.json();
-            if (osrmData.code === "Ok" && osrmData.routes?.length > 0) {
-              routeGeometry = osrmData.routes[0].geometry.coordinates; // [[lon,lat], ...]
-              totalDistanceKm = osrmData.routes[0].distance / 1000;
+      if (pickupCoords && dropCoords) {
+        const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${pickupCoords[1]},${pickupCoords[0]};${dropCoords[1]},${dropCoords[0]}?overview=full&geometries=geojson&steps=false`;
+        let routeGeometry = null;
+        let totalDistanceKm = 0;
+        try {
+          const osrmRes = await fetch(osrmUrl);
+          const osrmData = await osrmRes.json();
+          if (osrmData.code === "Ok" && osrmData.routes?.length > 0) {
+            routeGeometry = osrmData.routes[0].geometry.coordinates; // [[lon,lat], ...]
+            totalDistanceKm = osrmData.routes[0].distance / 1000;
+          }
+        } catch (e) {
+          console.warn("OSRM checkpoint generation failed:", e.message);
+        }
+
+        // Place checkpoints every 160 km (4h driving), skip if route < 100km
+        const CHECKPOINT_INTERVAL_KM = 160;
+        const checkpointsToInsert = [];
+        if (totalDistanceKm >= 100) {
+          const numCheckpoints = Math.floor(totalDistanceKm / CHECKPOINT_INTERVAL_KM);
+          for (let i = 1; i <= numCheckpoints; i++) {
+            const fraction = (i * CHECKPOINT_INTERVAL_KM) / totalDistanceKm;
+            let cpLat = null, cpLng = null;
+            if (routeGeometry && routeGeometry.length > 0) {
+              const idx = Math.min(Math.floor(fraction * routeGeometry.length), routeGeometry.length - 1);
+              cpLng = routeGeometry[idx][0];
+              cpLat = routeGeometry[idx][1];
             }
-          } catch (e) {
-            console.warn("OSRM checkpoint generation failed:", e.message);
+            checkpointsToInsert.push({
+              load_id,
+              driver_id,
+              checkpoint_index: i,
+              label: `Rest Stop #${i}`,
+              approx_km: Math.round(i * CHECKPOINT_INTERVAL_KM),
+              approx_lat: cpLat,
+              approx_lng: cpLng,
+            });
           }
 
-          // Place checkpoints every 160 km (4h driving), skip if route < 100km
-          const CHECKPOINT_INTERVAL_KM = 160;
-          const checkpointsToInsert = [];
-          if (totalDistanceKm >= 100) {
-            const numCheckpoints = Math.floor(totalDistanceKm / CHECKPOINT_INTERVAL_KM);
-            for (let i = 1; i <= numCheckpoints; i++) {
-              const fraction = (i * CHECKPOINT_INTERVAL_KM) / totalDistanceKm;
-              let cpLat = null, cpLng = null;
-              if (routeGeometry && routeGeometry.length > 0) {
-                const idx = Math.min(Math.floor(fraction * routeGeometry.length), routeGeometry.length - 1);
-                cpLng = routeGeometry[idx][0];
-                cpLat = routeGeometry[idx][1];
-              }
-              checkpointsToInsert.push({
-                load_id,
-                driver_id,
-                checkpoint_index: i,
-                label: `Rest Stop #${i}`,
-                approx_km: Math.round(i * CHECKPOINT_INTERVAL_KM),
-                approx_lat: cpLat,
-                approx_lng: cpLng,
-              });
-            }
-
-            if (checkpointsToInsert.length > 0) {
-              const { error: cpErr } = await supabase
-                .from("driver_checkpoints")
-                .insert(checkpointsToInsert);
-              if (cpErr) console.warn("Checkpoint insert warn:", cpErr.message);
-            }
+          if (checkpointsToInsert.length > 0) {
+            const { error: cpErr } = await supabase
+              .from("driver_checkpoints")
+              .insert(checkpointsToInsert);
+            if (cpErr) console.warn("Checkpoint insert warn:", cpErr.message);
           }
         }
       }

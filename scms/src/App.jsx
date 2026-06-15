@@ -31,6 +31,7 @@ import BuyerWarehouses from "./pages/BuyerWarehouses";
 import "leaflet/dist/leaflet.css"
 import useWarehouseMonitor from "./hooks/useWarehouseMonitor";
 import WarehouseAlertBanner from "./components/WarehouseAlertBanner";
+import KineticLoader from "./components/KineticLoader";
 
 
 
@@ -81,11 +82,11 @@ function App() {
 
   // ✅ Loading states
   if (loading) {
-    return <div className="loading-screen">Loading...</div>;
+    return <KineticLoader message="Loading..." />;
   }
 
   if (session && !role) {
-    return <div className="loading-screen">Loading role...</div>;
+    return <KineticLoader message="Loading role..." />;
   }
 
   // ✅ Layout rendering

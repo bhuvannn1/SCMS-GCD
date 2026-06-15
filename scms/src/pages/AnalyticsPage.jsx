@@ -4,6 +4,7 @@ import {
     BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
     PieChart, Pie, Cell, CartesianGrid, Legend
 } from 'recharts';
+import KineticLoader from '../components/KineticLoader';
 
 const AnimatedChart = ({ children }) => {
     const [isVisible, setIsVisible] = useState(false);
@@ -587,11 +588,7 @@ const AnalyticsPage = () => {
     }, []);
 
     if (loading) {
-        return (
-            <div style={{ height: '100vh', display: 'flex', justifyContent: 'center', alignItems: 'center', backgroundColor: '#f8fafc', color: '#1e293b' }}>
-                <h2>Loading Analytics...</h2>
-            </div>
-        );
+        return <KineticLoader message="Loading Analytics..." />;
     }
 
     // --- Data Processing ---
@@ -888,10 +885,8 @@ const AnalyticsPage = () => {
                                             <td style={{ padding: '12px 8px' }}>
                                                 <span style={{
                                                     padding: '4px 8px', borderRadius: '12px', fontSize: '0.8rem',
-                                                    backgroundColor: driver.status?.toLowerCase() === 'assigned' ? '#d1fae5' :
-                                                        driver.status?.toLowerCase() === 'available' ? '#dbeafe' : '#f1f5f9',
-                                                    color: driver.status?.toLowerCase() === 'assigned' ? '#059669' :
-                                                        driver.status?.toLowerCase() === 'available' ? '#2563eb' : '#64748b'
+                                                    backgroundColor: driver.status?.toLowerCase() === 'active' ? '#dbeafe' : '#f1f5f9',
+                                                    color: driver.status?.toLowerCase() === 'active' ? '#2563eb' : '#64748b'
                                                 }}>
                                                     {driver.status || 'Offline'}
                                                 </span>

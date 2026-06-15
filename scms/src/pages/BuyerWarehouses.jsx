@@ -4,6 +4,7 @@ import {
   Plus, Trash2, Star, MapPin, Phone, User, FileText,
   Building2, X, CheckCircle, Pencil, Home
 } from "lucide-react";
+import KineticLoader from "../components/KineticLoader";
 
 const API_BASE = process.env.REACT_APP_API_URL || "http://localhost:5000";
 
@@ -159,6 +160,10 @@ const BuyerWarehouses = () => {
     }
   };
 
+  if (loading) {
+    return <KineticLoader message="Loading your warehouses..." />;
+  }
+
   return (
     <div className="page orders" style={{ paddingTop: "24px" }}>
       {/* Page Header */}
@@ -213,13 +218,6 @@ const BuyerWarehouses = () => {
         </div>
       )}
 
-      {/* Loading */}
-      {loading && (
-        <div style={{ textAlign: "center", padding: "48px", color: "var(--text-secondary)" }}>
-          <div style={{ fontSize: "2rem", marginBottom: "12px" }}>⏳</div>
-          <p>Loading your warehouses...</p>
-        </div>
-      )}
 
       {/* Empty State */}
       {!loading && warehouses.length === 0 && (
