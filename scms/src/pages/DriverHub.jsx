@@ -171,6 +171,7 @@ const Card = ({ title, subtitle, children, style = {} }) => (
 const DriverHub = () => {
   const [user, setUser] = useState(null);
   const fileInputRef = useRef(null);
+  const scanInputRef = useRef(null);
 
   // Profile status & completeness state
   const [profileComplete, setProfileComplete] = useState(true);
@@ -269,6 +270,10 @@ const DriverHub = () => {
   // proof upload
   const [uploadingFor, setUploadingFor] = useState(null); // load_id
   const [uploadMsg, setUploadMsg] = useState({});
+
+  // ai scanner
+  const [scanningFor, setScanningFor] = useState(null);
+  const [scanResult, setScanResult] = useState({});
 
   // reroute notifications
   const [rerouteAlerts, setRerouteAlerts] = useState([]);
@@ -930,6 +935,44 @@ const DriverHub = () => {
     }
   };
 
+  const handleAIScan = async (loadId, file) => {
+    if (!file || !user) return;
+    setScanningFor(loadId);
+    setScanResult(prev => ({ ...prev, [loadId]: null }));
+    
+    try {
+      const formData = new FormData();
+      formData.append('document', file);
+
+      const response = await fetch(`${API}/api/vision/scan`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Failed to scan document');
+      
+      if (!data.text) {
+        setScanResult(prev => ({ ...prev, [loadId]: { ok: false, msg: 'No text or barcode found in the image.' } }));
+        return;
+      }
+
+      const textUpper = data.text.toUpperCase();
+      const loadIdUpper = loadId.toUpperCase();
+      const foundMatch = textUpper.includes(loadIdUpper) || textUpper.includes('INVOICE') || textUpper.includes('BARCODE') || textUpper.includes('AWB');
+
+      if (foundMatch) {
+        setScanResult(prev => ({ ...prev, [loadId]: { ok: true, msg: `Verified! Extracted data matches ${loadId}.` } }));
+      } else {
+        setScanResult(prev => ({ ...prev, [loadId]: { ok: false, msg: `Mismatch. Scanned text does not contain ${loadId}. Found: ${data.text.substring(0, 60)}...` } }));
+      }
+    } catch (err) {
+      setScanResult(prev => ({ ...prev, [loadId]: { ok: false, msg: 'Scan failed: ' + err.message } }));
+    } finally {
+      setScanningFor(null);
+    }
+  };
+
   // ── Google Maps link ──────────────────────────────────────────────────────
   const mapsLink = (pickup, drop) => {
     if (!pickup) return null;
@@ -1554,6 +1597,47 @@ const DriverHub = () => {
             onChange={e => {
               const file = e.target.files[0];
               if (file) handleProofUpload(activeLoad.load_id, file);
+              e.target.value = '';
+            }}
+          />
+          <button
+            onClick={() => scanInputRef.current?.click()}
+            disabled={scanningFor === activeLoad.load_id}
+            style={{
+              flex: 1,
+              padding: '16px 28px',
+              fontSize: '1rem',
+              fontWeight: 800,
+              borderRadius: '12px',
+              border: 'none',
+              background: 'linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%)',
+              color: 'white',
+              cursor: 'pointer',
+              boxShadow: '0 4px 14px rgba(139,92,246,0.3)',
+              transition: 'all 0.2s',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '8px',
+              minWidth: '200px'
+            }}
+          >
+            {scanningFor === activeLoad.load_id ? (
+              <Loader2 className="animate-spin" size={20} />
+            ) : (
+              <Camera size={20} />
+            )}
+            <span>AI Scan Label</span>
+          </button>
+          <input
+            ref={scanInputRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            style={{ display: 'none' }}
+            onChange={e => {
+              const file = e.target.files[0];
+              if (file) handleAIScan(activeLoad.load_id, file);
               e.target.value = '';
             }}
           />

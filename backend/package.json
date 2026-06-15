@@ -14,6 +14,7 @@
   "dependencies": {
     "@google-cloud/speech": "^7.3.2",
     "@google-cloud/translate": "^9.4.2",
+    "@google-cloud/vision": "^5.3.7",
     "@google/generative-ai": "^0.24.1",
     "@supabase/supabase-js": "^2.104.1",
     "cors": "^2.8.6",

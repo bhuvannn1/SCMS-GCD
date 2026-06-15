@@ -41,8 +41,10 @@ app.use(express.json());
 // ── Google API Routes ────────────────────────────────────────────────────────
 const speechRoutes = require('./routes/speechRoutes');
 const translationRoutes = require('./routes/translationRoutes');
+const visionRoutes = require('./routes/visionRoutes');
 app.use('/api/speech', speechRoutes);
 app.use('/api/translate', translationRoutes);
+app.use('/api/vision', visionRoutes);
 
 // ── Razorpay instance ────────────────────────────────────────────────────────
 const razorpay = new Razorpay({
