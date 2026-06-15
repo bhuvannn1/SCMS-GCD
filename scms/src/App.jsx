@@ -32,6 +32,7 @@ import "leaflet/dist/leaflet.css"
 import useWarehouseMonitor from "./hooks/useWarehouseMonitor";
 import WarehouseAlertBanner from "./components/WarehouseAlertBanner";
 import KineticLoader from "./components/KineticLoader";
+import RouteTransition from "./components/RouteTransition";
 
 
 
@@ -97,17 +98,19 @@ function App() {
         <div className="app-layout top-nav-layout">
           <BuyerSidebar />
           <main className="main-content">
-            <Routes>
-              <Route path="/" element={<Navigate to="/orders" replace />} />
-              <Route path="/orders" element={<Orders />} />
-              <Route path="/payments" element={<Payment />} />
-              <Route path="/buyer/invoices" element={<BuyerInvoices />} />
-              <Route path="/buyer/warehouses" element={<BuyerWarehouses />} />
-              <Route path="/ai-assistance" element={<AIAssistancePage />} />
-              <Route path="/map" element={<MapView />} />
-              <Route path="/settings" element={<SettingsPage />} />
-              <Route path="*" element={<Navigate to="/orders" replace />} />
-            </Routes>
+            <RouteTransition>
+              <Routes>
+                <Route path="/" element={<Navigate to="/orders" replace />} />
+                <Route path="/orders" element={<Orders />} />
+                <Route path="/payments" element={<Payment />} />
+                <Route path="/buyer/invoices" element={<BuyerInvoices />} />
+                <Route path="/buyer/warehouses" element={<BuyerWarehouses />} />
+                <Route path="/ai-assistance" element={<AIAssistancePage />} />
+                <Route path="/map" element={<MapView />} />
+                <Route path="/settings" element={<SettingsPage />} />
+                <Route path="*" element={<Navigate to="/orders" replace />} />
+              </Routes>
+            </RouteTransition>
           </main>
         </div>
       );
@@ -119,16 +122,18 @@ function App() {
         <div className="app-layout top-nav-layout">
           <DriverSidebar />
           <main className="main-content">
-            <Routes>
-              <Route path="/" element={<Navigate to="/driver/hub" replace />} />
-              <Route path="/orders" element={<Orders />} />
-              <Route path="/map" element={<MapView />} />
-              <Route path="/driver/hub" element={<DriverHub />} />
-              <Route path="/driver/earnings" element={<DriverEarnings />} />
-              <Route path="/ai-assistance" element={<AIAssistancePage />} />
-              <Route path="/settings" element={<SettingsPage />} />
-              <Route path="*" element={<Navigate to="/driver/hub" replace />} />
-            </Routes>
+            <RouteTransition>
+              <Routes>
+                <Route path="/" element={<Navigate to="/driver/hub" replace />} />
+                <Route path="/orders" element={<Orders />} />
+                <Route path="/map" element={<MapView />} />
+                <Route path="/driver/hub" element={<DriverHub />} />
+                <Route path="/driver/earnings" element={<DriverEarnings />} />
+                <Route path="/ai-assistance" element={<AIAssistancePage />} />
+                <Route path="/settings" element={<SettingsPage />} />
+                <Route path="*" element={<Navigate to="/driver/hub" replace />} />
+              </Routes>
+            </RouteTransition>
           </main>
         </div>
       );
@@ -141,21 +146,23 @@ function App() {
         <div className="app-layout top-nav-layout">
           <Sidebar />
           <main className="main-content">
-            <Routes>
-              <Route path="/" element={<Navigate to="/orders" replace />} />
-              <Route path="/orders" element={<Orders />} />
-              <Route path="/analytics" element={<AnalyticsPage />} />
-              <Route path="/warehouse" element={<WarehousePage />} />
-              <Route path="/Fleet" element={<Fleet />} />
-              <Route path="/Dispatch" element={<Dispatch />} />
-              <Route path="/drivers" element={<Driver />} />
-              <Route path="/ai-assistance" element={<AIAssistancePage />} />
-              <Route path="/map" element={<MapView />} />
-              <Route path="/payments-dashboard" element={<PaymentsDashboard />} />
-              <Route path="/payments" element={<Payment />} />
-              <Route path="/settings" element={<SettingsPage />} />
-              <Route path="*" element={<Navigate to="/orders" replace />} />
-            </Routes>
+            <RouteTransition>
+              <Routes>
+                <Route path="/" element={<Navigate to="/orders" replace />} />
+                <Route path="/orders" element={<Orders />} />
+                <Route path="/analytics" element={<AnalyticsPage />} />
+                <Route path="/warehouse" element={<WarehousePage />} />
+                <Route path="/Fleet" element={<Fleet />} />
+                <Route path="/Dispatch" element={<Dispatch />} />
+                <Route path="/drivers" element={<Driver />} />
+                <Route path="/ai-assistance" element={<AIAssistancePage />} />
+                <Route path="/map" element={<MapView />} />
+                <Route path="/payments-dashboard" element={<PaymentsDashboard />} />
+                <Route path="/payments" element={<Payment />} />
+                <Route path="/settings" element={<SettingsPage />} />
+                <Route path="*" element={<Navigate to="/orders" replace />} />
+              </Routes>
+            </RouteTransition>
           </main>
         </div>
       </>
@@ -165,8 +172,7 @@ function App() {
   return (
     <ThemeProvider>
       <BrowserRouter>
-        <div className="splash-overlay"></div>
-        {session && <img src="/IGNIS.png" alt="IGNIS Logo" className="splash-logo-global" />}
+
         {session ? (
           renderLayout()
         ) : (

@@ -296,12 +296,10 @@ const AIAssistant = () => {
 
             let targetLang = 'en';
 
-            // 1. Try reading selected option from Google Translate select dropdown
             const selectEl = document.querySelector('.goog-te-combo');
             if (selectEl && selectEl.value) {
                 targetLang = selectEl.value;
             } else {
-                // 2. Try reading from googtrans cookie
                 const match = document.cookie.match(/googtrans=([^;]+)/);
                 if (match) {
                     const parts = match[1].split('/');
@@ -379,6 +377,37 @@ const AIAssistant = () => {
         setInput('');
         setLoading(true);
 
+        // Determine user language
+        let targetLang = 'en';
+        const selectEl = document.querySelector('.goog-te-combo');
+        if (selectEl && selectEl.value) {
+            targetLang = selectEl.value;
+        } else {
+            const match = document.cookie.match(/googtrans=([^;]+)/);
+            if (match) {
+                const parts = match[1].split('/');
+                targetLang = parts[parts.length - 1];
+            }
+        }
+
+        // Translate to English if user is not in English
+        let translatedTextToProcess = messageText;
+        if (targetLang !== 'en') {
+            try {
+                const transRes = await fetch(`${API}/api/translate`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text: messageText, targetLanguage: 'en' })
+                });
+                const transData = await transRes.json();
+                if (transData.translatedText) {
+                    translatedTextToProcess = transData.translatedText;
+                }
+            } catch (err) {
+                console.error("Failed to translate user input to English:", err);
+            }
+        }
+
         // Save user message to Supabase
         if (userId) {
             try {
@@ -398,7 +427,7 @@ const AIAssistant = () => {
 
         try {
             // 2. Call detectIntent
-            const intent = detectIntent(messageText);
+            const intent = detectIntent(translatedTextToProcess);
 
             // 3. Fetch context directly from Supabase with role-based scoping
             let contextData = {};
@@ -582,7 +611,7 @@ SCMS App Usage Guidebook:
    App usage guidebook:
    ${APP_GUIDE}
    
-   User question: ${messageText}
+    User question: ${translatedTextToProcess}
    
    Rules:
    - If they ask how to use the app or how to complete tasks, guide them clearly using the App usage guidebook.
@@ -596,7 +625,24 @@ SCMS App Usage Guidebook:
 
             // 5. Call Gemini directly
             const result = await model.generateContent(prompt);
-            const reply = result.response.text();
+            let reply = result.response.text();
+
+            // Translate AI reply back to user's language if necessary
+            if (targetLang !== 'en') {
+                try {
+                    const transRes = await fetch(`${API}/api/translate`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ text: reply, targetLanguage: targetLang })
+                    });
+                    const transData = await transRes.json();
+                    if (transData.translatedText) {
+                        reply = transData.translatedText;
+                    }
+                } catch (err) {
+                    console.error("Failed to translate AI response:", err);
+                }
+            }
 
             // 6. Add AI reply
             setMessages(prev => [...prev, { role: 'ai', text: reply, timestamp: new Date() }]);

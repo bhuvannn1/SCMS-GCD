@@ -38,6 +38,12 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.use(express.json());
 
+// ── Google API Routes ────────────────────────────────────────────────────────
+const speechRoutes = require('./routes/speechRoutes');
+const translationRoutes = require('./routes/translationRoutes');
+app.use('/api/speech', speechRoutes);
+app.use('/api/translate', translationRoutes);
+
 // ── Razorpay instance ────────────────────────────────────────────────────────
 const razorpay = new Razorpay({
   key_id: process.env.RAZORPAY_KEY_ID,

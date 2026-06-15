@@ -12,11 +12,14 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "@google-cloud/speech": "^7.3.2",
+    "@google-cloud/translate": "^9.4.2",
     "@google/generative-ai": "^0.24.1",
     "@supabase/supabase-js": "^2.104.1",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "multer": "^2.1.1",
     "pg": "^8.21.0",
     "razorpay": "^2.9.6"
   }

@@ -43,7 +43,6 @@ const BuyerSidebar = () => {
   const navLinks = [
     { to: "/orders", label: 'My Purchases' },
     { to: "/buyer/invoices", label: 'Invoices' },
-    { to: "/buyer/warehouses", label: 'My Warehouses' },
     { to: "/map", label: 'Tracking' },
     { to: "/payments", label: 'Payments' },
     { to: "/ai-assistance", label: 'AI Assistant' }
