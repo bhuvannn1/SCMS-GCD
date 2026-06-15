@@ -291,10 +291,11 @@ app.post("/api/warehouse/reroute", async (req, res) => {
 // ────────────────────────────────────────────────────────────────────────────
 app.post("/api/admin/create-user", async (req, res) => {
   try {
-    const { email, password, full_name, phone, role, license_number, status } = req.body;
+    const { email, password, full_name, display_name, phone, role, license_number, status } = req.body;
+    const resolvedName = full_name || display_name;
 
-    if (!email || !password || !role || !full_name) {
-      return res.status(400).json({ error: "Email, password, role, and full_name are required." });
+    if (!email || !password || !role || !resolvedName) {
+      return res.status(400).json({ error: "Email, password, role, and name/full_name are required." });
     }
 
     // 1. Create auth user
@@ -302,7 +303,7 @@ app.post("/api/admin/create-user", async (req, res) => {
       email,
       password,
       email_confirm: true,
-      user_metadata: { role, full_name }
+      user_metadata: { role, full_name: resolvedName, display_name: resolvedName }
     });
 
     if (authError) {
@@ -319,7 +320,7 @@ app.post("/api/admin/create-user", async (req, res) => {
         id: userId,
         email,
         role,
-        full_name,
+        full_name: resolvedName,
         phone: phone || null
       });
 

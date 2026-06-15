@@ -13,6 +13,7 @@ const Auth = () => {
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState(null)
   const [showPassword, setShowPassword] = useState(false)
+  const [displayName, setDisplayName] = useState('')
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -42,7 +43,8 @@ const Auth = () => {
           body: JSON.stringify({
             email,
             password,
-            full_name: email.split('@')[0],
+            full_name: displayName,
+            display_name: displayName,
             role: roleMap[role]
           })
         })
@@ -53,6 +55,7 @@ const Auth = () => {
           setMessage('Registration successful! You can now log in.')
           setIsLogin(true)
           setPassword('')
+          setDisplayName('')
         }
       } catch (err) {
         setError(err.message || 'An error occurred during registration')
@@ -77,19 +80,34 @@ const Auth = () => {
 
         <form onSubmit={handleSubmit} className="auth-form">
           {!isLogin && (
-            <div className="input-group">
-              <label htmlFor="role">Account Type</label>
-              <select
-                id="role"
-                value={role}
-                onChange={(e) => setRole(e.target.value)}
-                className="auth-input"
-              >
-                <option value="seller">Seller</option>
-                <option value="buyer">Buyer</option>
-                <option value="driver">Driver</option>
-              </select>
-            </div>
+            <>
+              <div className="input-group">
+                <label htmlFor="displayName">Display Name</label>
+                <input
+                  type="text"
+                  id="displayName"
+                  value={displayName}
+                  onChange={(e) => setDisplayName(e.target.value)}
+                  placeholder="enter your display name"
+                  className="auth-input"
+                  required
+                />
+              </div>
+
+              <div className="input-group">
+                <label htmlFor="role">Account Type</label>
+                <select
+                  id="role"
+                  value={role}
+                  onChange={(e) => setRole(e.target.value)}
+                  className="auth-input"
+                >
+                  <option value="seller">Seller</option>
+                  <option value="buyer">Buyer</option>
+                  <option value="driver">Driver</option>
+                </select>
+              </div>
+            </>
           )}
 
           <div className="input-group">
