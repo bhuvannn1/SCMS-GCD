@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { UserCheck, Truck, Coffee, IndianRupee, CheckCircle, BarChart3, MapPin, Navigation, Clock, Camera, Leaf, Loader2, X, Compass, Shield, AlertTriangle, Flag, Ban, XCircle, Check } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Polyline } from 'react-leaflet';
 import L from 'leaflet';
@@ -1560,46 +1561,7 @@ const DriverHub = () => {
             <span>View Route</span>
           </button>
 
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            disabled={uploadingFor === activeLoad.load_id}
-            style={{
-              flex: 1,
-              padding: '16px 28px',
-              fontSize: '1rem',
-              fontWeight: 800,
-              borderRadius: '12px',
-              border: 'none',
-              background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
-              color: 'white',
-              cursor: 'pointer',
-              boxShadow: '0 4px 14px rgba(16,185,129,0.3)',
-              transition: 'all 0.2s',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '8px',
-              minWidth: '200px'
-            }}
-          >
-            {uploadingFor === activeLoad.load_id ? (
-              <Loader2 className="animate-spin" size={20} />
-            ) : (
-              <Camera size={20} />
-            )}
-            <span>Upload POD</span>
-          </button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*,application/pdf"
-            style={{ display: 'none' }}
-            onChange={e => {
-              const file = e.target.files[0];
-              if (file) handleProofUpload(activeLoad.load_id, file);
-              e.target.value = '';
-            }}
-          />
+
           <button
             onClick={() => scanInputRef.current?.click()}
             disabled={scanningFor === activeLoad.load_id}
@@ -1643,6 +1605,64 @@ const DriverHub = () => {
           />
         </div>
 
+        {/* AI Scan Label Result Modal via Portal */}
+        {scanResult[activeLoad.load_id] && createPortal(
+          <div style={{
+            position: 'fixed',
+            top: 0, left: 0, right: 0, bottom: 0,
+            backgroundColor: 'rgba(0,0,0,0.6)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 999999
+          }}>
+            <div style={{
+              background: 'white',
+              padding: '30px',
+              borderRadius: '24px',
+              width: '90%',
+              maxWidth: '400px',
+              textAlign: 'center',
+              boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)',
+              animation: 'slideUp 0.3s ease-out'
+            }}>
+              <div style={{ marginBottom: '20px' }}>
+                {scanResult[activeLoad.load_id].ok ? (
+                  <div style={{ width: '80px', height: '80px', borderRadius: '50%', background: '#dcfce7', color: '#16a34a', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto' }}>
+                    <CheckCircle size={40} />
+                  </div>
+                ) : (
+                  <div style={{ width: '80px', height: '80px', borderRadius: '50%', background: '#fee2e2', color: '#dc2626', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto' }}>
+                    <AlertTriangle size={40} />
+                  </div>
+                )}
+              </div>
+              <h2 style={{ margin: '0 0 10px 0', fontSize: '1.5rem', color: '#1e293b' }}>
+                {scanResult[activeLoad.load_id].ok ? 'Label Verified!' : 'Verification Failed'}
+              </h2>
+              <p style={{ margin: '0 0 24px 0', color: '#64748b', fontSize: '1rem', lineHeight: '1.5' }}>
+                {scanResult[activeLoad.load_id].msg}
+              </p>
+              <button 
+                onClick={() => setScanResult(prev => ({ ...prev, [activeLoad.load_id]: null }))}
+                style={{
+                  width: '100%',
+                  padding: '16px',
+                  borderRadius: '12px',
+                  border: 'none',
+                  background: scanResult[activeLoad.load_id].ok ? '#16a34a' : '#dc2626',
+                  color: 'white',
+                  fontSize: '1.1rem',
+                  fontWeight: 800,
+                  cursor: 'pointer'
+                }}
+              >
+                Continue
+              </button>
+            </div>
+          </div>,
+          document.body
+        )}
         {/* Status Messages for Upload */}
         {uploadMsg[activeLoad.load_id] && (
           <div style={{
