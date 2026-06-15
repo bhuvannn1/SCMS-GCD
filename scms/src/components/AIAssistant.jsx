@@ -564,7 +564,7 @@ SCMS App Usage Guidebook:
   4. Live Tracking: Track the real-time location and optimized route of active delivery trucks in the "Tracking" tab.
 - Driver Portal Features:
   1. Onboarding/Profile: Fill in your Driver Name, Phone, License, and Vehicle details in the "Driver Hub" to activate your account.
-  2. Toggle Active Status: Switch your status between "Available" (accepting loads), "On Trip", and "On Break" (inactive) by tapping the status button in the Driver Hub header.
+  2. Toggle Active Status: Switch your status between "Active" (available for assignments) and "Not Active" (or "On Trip" and "On Break" during a journey) by tapping the status button in the Driver Hub header.
   3. Assigned Loads: View details of all orders assigned to you under the "Assigned Loads" tab.
   4. Google Maps Routing: Tap the "Navigate" button next to any assigned load to open driving directions in Google Maps.
   5. Upload Proof of Delivery: Upload proof files (images/documents) directly under the assigned loads tab once a delivery is completed.

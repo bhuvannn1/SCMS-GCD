@@ -74,7 +74,7 @@ const Dispatch = () => {
       const { data, error } = await supabase
         .from('driver')
         .select('driver_id, name, status, rating')
-        .ilike('status', 'available')
+        .eq('status', 'Active')
 
       if (error) {
         console.log("Driver fetch error:", error)
