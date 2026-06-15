@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from "react"
-import { Search, ArrowUpDown, Filter, CheckCircle, XCircle } from 'lucide-react';
+import { Search, ArrowUpDown, Filter } from 'lucide-react';
 import supabase from "../config/SupabaseClient"
 import useClickOutside from "../hooks/useClickOutside"
 
@@ -505,113 +505,182 @@ const Fleet = () => {
 
       {sortedFleet && sortedFleet.length > 0 && (
         <div className="fleet-list">
-          {sortedFleet.map((vehicle) => (
-            <div key={vehicle.id} className="fleet-card" style={{
-              background: 'var(--bg-card,#fff)',
-              border: '1px solid var(--border-color,#e2e8f0)',
-              borderRadius: '16px',
-              padding: '20px',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '12px',
-              boxShadow: 'var(--shadow-md, 0 4px 10px rgba(0,0,0,0.05))',
-              position: 'relative'
-            }}>
+          {sortedFleet.map((vehicle) => {
+            const isRunning = vehicle.status === 'Running' || vehicle.status === 'Active';
+            const leftBarBg = isRunning
+              ? 'linear-gradient(180deg, #10b981, #059669)'
+              : 'linear-gradient(180deg, #ef4444, #dc2626)';
 
-              <div className="fleet-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color, rgba(0,0,0,0.06))', paddingBottom: '10px' }}>
-                <div className="fleet-header-left" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <div className="fleet-icon" style={{ display: 'flex', alignItems: 'center', color: '#f97316' }}>
-                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="3" width="15" height="13"></rect><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"></polygon><circle cx="5.5" cy="18.5" r="2.5"></circle><circle cx="18.5" cy="18.5" r="2.5"></circle></svg>
-                  </div>
-                  <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800 }}>{vehicle.vehicle_number}</h3>
-                </div>
-                
-                <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                  {/* Active Status Badge */}
-                  {(vehicle.status === 'Running' || vehicle.status === 'Active') ? (
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', color: '#10b981', background: 'rgba(16,185,129,0.1)', padding: '2px 8px', borderRadius: '12px', fontSize: '0.72rem', fontWeight: 700 }}><CheckCircle size={10} /> Active</span>
-                  ) : (
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', color: '#ef4444', background: 'rgba(239,68,68,0.1)', padding: '2px 8px', borderRadius: '12px', fontSize: '0.72rem', fontWeight: 700 }}><XCircle size={10} /> Inactive</span>
-                  )}
-                  
-                  {/* Verification Status Badge */}
-                  {vehicle.driver_id && (
-                    <span style={{
-                      display: 'inline-flex', alignItems: 'center', gap: '4px',
-                      color: vehicle.driver_status === 'Verified' ? '#10b981' : '#f59e0b',
-                      background: vehicle.driver_status === 'Verified' ? 'rgba(16,185,129,0.1)' : 'rgba(245,158,11,0.1)',
-                      padding: '2px 8px', borderRadius: '12px', fontSize: '0.72rem', fontWeight: 700
+            return (
+              <div key={vehicle.id} className="fleet-card" style={{
+                background: 'var(--bg-card, #ffffff)',
+                borderRadius: '24px',
+                padding: '24px',
+                boxShadow: '0 10px 30px rgba(0,0,0,0.04)',
+                border: '1px solid var(--border-color, #e2e8f0)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '16px',
+                transition: 'all 0.3s ease',
+                position: 'relative',
+                overflow: 'hidden'
+              }}>
+                {/* Visual indicator bar on the left side of the card, premium style */}
+                <div style={{
+                  position: 'absolute',
+                  left: 0,
+                  top: 0,
+                  bottom: 0,
+                  width: '5px',
+                  background: leftBarBg
+                }} />
+
+                {/* Card Header */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    {/* Peach Truck Icon container */}
+                    <div style={{
+                      width: '42px',
+                      height: '42px',
+                      borderRadius: '12px',
+                      background: 'rgba(249, 115, 22, 0.08)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      border: '1px solid rgba(249, 115, 22, 0.15)',
+                      color: '#f97316'
                     }}>
-                      {vehicle.driver_status === 'Verified' ? '✓ Verified' : 'Unverified'}
+                      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="3" width="15" height="13"></rect><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"></polygon><circle cx="5.5" cy="18.5" r="2.5"></circle><circle cx="18.5" cy="18.5" r="2.5"></circle></svg>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '0.68rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.5px' }}>VEHICLE REF</div>
+                      <div style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--text-primary, #0f172a)' }}>
+                        {vehicle.vehicle_number}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                    {/* Active Status Badge */}
+                    <span style={{
+                      background: isRunning ? 'rgba(16,185,129,0.08)' : 'rgba(239, 68, 68, 0.08)',
+                      color: isRunning ? '#10b981' : '#ef4444',
+                      borderRadius: '20px',
+                      padding: '6px 12px',
+                      fontSize: '0.75rem',
+                      fontWeight: '700',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px'
+                    }}>
+                      <span style={{
+                        width: '6px',
+                        height: '6px',
+                        borderRadius: '50%',
+                        background: isRunning ? '#10b981' : '#ef4444',
+                        display: 'inline-block'
+                      }} />
+                      {isRunning ? 'Active' : 'Inactive'}
                     </span>
+
+                    {/* Verification Status Badge */}
+                    {vehicle.driver_id && (
+                      <span style={{
+                        background: vehicle.driver_status === 'Verified' ? 'rgba(16,185,129,0.08)' : 'rgba(245, 158, 11, 0.08)',
+                        color: vehicle.driver_status === 'Verified' ? '#10b981' : '#f59e0b',
+                        borderRadius: '20px',
+                        padding: '6px 12px',
+                        fontSize: '0.75rem',
+                        fontWeight: '700',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px'
+                      }}>
+                        <span style={{
+                          width: '6px',
+                          height: '6px',
+                          borderRadius: '50%',
+                          background: vehicle.driver_status === 'Verified' ? '#10b981' : '#f59e0b',
+                          display: 'inline-block'
+                        }} />
+                        {vehicle.driver_status === 'Verified' ? 'Verified' : 'Unverified'}
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Driver Info section in a custom block */}
+                <div style={{
+                  background: 'var(--bg-inset, #f8fafc)',
+                  padding: '16px',
+                  borderRadius: '16px',
+                  border: '1px solid var(--border-color, #e2e8f0)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '12px'
+                }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                    <span style={{ fontSize: '0.62rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Assigned Driver</span>
+                    <span style={{ fontSize: '0.95rem', fontWeight: 800, color: 'var(--text-primary, #1e293b)' }}>
+                      {vehicle.profiles?.full_name || 'None'}
+                    </span>
+                  </div>
+
+                  {vehicle.profiles && (
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', borderTop: '1px solid var(--border-color, rgba(0,0,0,0.06))', paddingTop: '10px' }}>
+                      <div>
+                        <span style={{ fontSize: '0.62rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Email</span>
+                        <span style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-secondary, #64748b)', wordBreak: 'break-all' }}>{vehicle.profiles.email || 'N/A'}</span>
+                      </div>
+                      <div>
+                        <span style={{ fontSize: '0.62rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Phone</span>
+                        <span style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-secondary, #64748b)' }}>{vehicle.profiles.phone || 'N/A'}</span>
+                      </div>
+                    </div>
                   )}
                 </div>
-              </div>
 
-              <div className="fleet-details" style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '0.82rem' }}>
-                <div className="detail-item full-width" style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                  <span className="detail-label" style={{ fontSize: '0.65rem', color: '#64748b', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Assigned Driver</span>
-                  <span className="detail-value" style={{ fontWeight: 800, color: 'var(--text-primary)', fontSize: '0.9rem' }}>{vehicle.profiles?.full_name || 'None'}</span>
+                {/* Location and Metadata Section */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', background: 'var(--bg-inset, #f8fafc)', padding: '16px', borderRadius: '16px', border: '1px solid var(--border-color, #e2e8f0)' }}>
+                  <div>
+                    <span style={{ fontSize: '0.62rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Location</span>
+                    <span style={{ fontSize: '0.85rem', fontWeight: 800, color: 'var(--text-primary, #1e293b)' }}>{vehicle.location || 'N/A'}</span>
+                  </div>
+                  <div>
+                    <span style={{ fontSize: '0.62rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.5px' }}>License Plate</span>
+                    <span style={{ fontSize: '0.85rem', fontWeight: 800, color: 'var(--text-primary, #1e293b)' }}>
+                      {vehicle.license_number || 'N/A'}
+                    </span>
+                  </div>
                 </div>
 
-                {vehicle.profiles && (
-                  <>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                        <span className="detail-label" style={{ fontSize: '0.62rem', color: '#64748b', fontWeight: 700, textTransform: 'uppercase' }}>Email</span>
-                        <span className="detail-value" style={{ color: 'var(--text-secondary)', wordBreak: 'break-all' }}>{vehicle.profiles.email || 'N/A'}</span>
-                      </div>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                        <span className="detail-label" style={{ fontSize: '0.62rem', color: '#64748b', fontWeight: 700, textTransform: 'uppercase' }}>Phone</span>
-                        <span className="detail-value" style={{ color: 'var(--text-secondary)' }}>{vehicle.profiles.phone || 'N/A'}</span>
-                      </div>
-                    </div>
-
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                      <span className="detail-label" style={{ fontSize: '0.62rem', color: '#64748b', fontWeight: 700, textTransform: 'uppercase' }}>License Number</span>
-                      <span className="detail-value" style={{ color: 'var(--text-secondary)', fontFamily: 'monospace' }}>{vehicle.license_number || 'N/A'}</span>
-                    </div>
-                  </>
+                {/* Verify Button for Sellers */}
+                {vehicle.driver_id && vehicle.driver_status !== 'Verified' && (
+                  <button
+                    onClick={() => handleVerifyDriver(vehicle.driver_id)}
+                    style={{
+                      width: '100%',
+                      padding: '12px',
+                      background: 'linear-gradient(135deg, #f97316 0%, #ea580c 100%)',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '12px',
+                      fontWeight: 800,
+                      fontSize: '0.85rem',
+                      cursor: 'pointer',
+                      boxShadow: '0 4px 12px rgba(249,115,22,0.2)',
+                      transition: 'all 0.2s',
+                      textAlign: 'center'
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-1px)'}
+                    onMouseLeave={e => e.currentTarget.style.transform = 'translateY(0)'}
+                  >
+                    Verify Driver Details
+                  </button>
                 )}
-
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', borderTop: '1px dashed var(--border-color, rgba(0,0,0,0.06))', paddingTop: '8px', marginTop: '4px' }}>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                    <span className="detail-label" style={{ fontSize: '0.62rem', color: '#64748b', fontWeight: 700, textTransform: 'uppercase' }}>Location</span>
-                    <span className="detail-value" style={{ color: 'var(--text-secondary)' }}>{vehicle.location || 'N/A'}</span>
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                    <span className="detail-label" style={{ fontSize: '0.62rem', color: '#64748b', fontWeight: 700, textTransform: 'uppercase' }}>Vehicle status</span>
-                    <span className="detail-value" style={{ color: 'var(--text-primary)', fontWeight: 700 }}>{vehicle.status}</span>
-                  </div>
-                </div>
               </div>
-
-              {/* Verify Button for Sellers */}
-              {vehicle.driver_id && vehicle.driver_status !== 'Verified' && (
-                <button
-                  onClick={() => handleVerifyDriver(vehicle.driver_id)}
-                  style={{
-                    width: '100%',
-                    padding: '8px 12px',
-                    background: 'linear-gradient(135deg, #f97316 0%, #ea580c 100%)',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '8px',
-                    fontWeight: 700,
-                    fontSize: '0.8rem',
-                    cursor: 'pointer',
-                    marginTop: '8px',
-                    boxShadow: '0 2px 6px rgba(249,115,22,0.2)',
-                    transition: 'all 0.2s'
-                  }}
-                  onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-1px)'}
-                  onMouseLeave={e => e.currentTarget.style.transform = 'translateY(0)'}
-                >
-                  Verify Driver Details
-                </button>
-              )}
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 

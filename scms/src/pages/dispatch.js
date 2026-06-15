@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from "react"
-import { Search, ArrowUpDown, Filter, Star, CheckCircle, XCircle, HelpCircle } from 'lucide-react';
+import { Search, ArrowUpDown, Filter, Star } from 'lucide-react';
 import supabase from "../config/SupabaseClient"
 import useClickOutside from "../hooks/useClickOutside"
 
@@ -299,45 +299,114 @@ const Dispatch = () => {
         <div className="dispatch-list">
           {sortedDispatch.map((item) => {
             const index = item.originalIndex;
-            const statusText = item.unassigned ? (
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', color: '#ef4444' }}><XCircle size={12} /> Unassigned</span>
-            ) : item.assigned ? (
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', color: '#10b981' }}><CheckCircle size={12} /> Assigned</span>
-            ) : (
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', color: '#64748b' }}><HelpCircle size={12} /> Unknown</span>
-            );
-            const statusClass = item.unassigned ? "stat-unassigned" : "stat-assigned";
+            const isAssigned = item.assigned;
+            const leftBarBg = isAssigned
+              ? 'linear-gradient(180deg, #10b981, #059669)'
+              : 'linear-gradient(180deg, #ef4444, #dc2626)';
 
             return (
-              <div key={index} className="dispatch-card">
-                <div className="dispatch-header">
-                  <div className="dispatch-header-left">
-                    <div className="dispatch-icon">
+              <div key={index} className="dispatch-card" style={{
+                background: 'var(--bg-card, #ffffff)',
+                borderRadius: '24px',
+                padding: '24px',
+                boxShadow: '0 10px 30px rgba(0,0,0,0.04)',
+                border: '1px solid var(--border-color, #e2e8f0)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '16px',
+                transition: 'all 0.3s ease',
+                position: 'relative',
+                overflow: 'hidden'
+              }}>
+                {/* Visual indicator bar on the left side of the card, premium style */}
+                <div style={{
+                  position: 'absolute',
+                  left: 0,
+                  top: 0,
+                  bottom: 0,
+                  width: '5px',
+                  background: leftBarBg
+                }} />
+
+                {/* Card Header */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    {/* Peach Clipboard Icon container */}
+                    <div style={{
+                      width: '42px',
+                      height: '42px',
+                      borderRadius: '12px',
+                      background: 'rgba(249, 115, 22, 0.08)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      border: '1px solid rgba(249, 115, 22, 0.15)',
+                      color: '#f97316'
+                    }}>
                       <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path><rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect></svg>
                     </div>
-                    <h3>Load #{index + 1}</h3>
+                    <div>
+                      <div style={{ fontSize: '0.68rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.5px' }}>DISPATCH REF</div>
+                      <div style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--text-primary, #0f172a)' }}>
+                        Load #{index + 1}
+                      </div>
+                    </div>
                   </div>
-                  <span style={{ fontSize: '0.85rem' }}>
-                    {statusText}
+
+                  {/* Status Badge */}
+                  <span style={{
+                    background: isAssigned ? 'rgba(16,185,129,0.08)' : 'rgba(239, 68, 68, 0.08)',
+                    color: isAssigned ? '#10b981' : '#ef4444',
+                    borderRadius: '20px',
+                    padding: '6px 12px',
+                    fontSize: '0.75rem',
+                    fontWeight: '700',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px'
+                  }}>
+                    <span style={{
+                      width: '6px',
+                      height: '6px',
+                      borderRadius: '50%',
+                      background: isAssigned ? '#10b981' : '#ef4444',
+                      display: 'inline-block'
+                    }} />
+                    {isAssigned ? 'Assigned' : 'Unassigned'}
                   </span>
                 </div>
 
-                <div className="dispatch-details">
-                  <div className="detail-item full-width stat-driver">
-                    <span className="detail-label">ASSIGNED DRIVER</span>
-                    <span className="detail-value">{item.assigned_driver || "None"}</span>
-                  </div>
-
-                  <div className={`detail-item ${statusClass}`}>
-                    <span className="detail-label">STATUS</span>
-                    <span className="detail-value">
-                      {item.unassigned ? "Unassigned" : item.assigned ? "Assigned" : "Unknown"}
+                {/* Details Section */}
+                <div style={{
+                  background: 'var(--bg-inset, #f8fafc)',
+                  padding: '16px',
+                  borderRadius: '16px',
+                  border: '1px solid var(--border-color, #e2e8f0)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '12px'
+                }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                    <span style={{ fontSize: '0.62rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Assigned Driver</span>
+                    <span style={{ fontSize: '0.95rem', fontWeight: 800, color: 'var(--text-primary, #1e293b)' }}>
+                      {item.assigned_driver || "None"}
                     </span>
                   </div>
+                </div>
 
-                  <div className="detail-item">
-                    <span className="detail-label">DRIVER ID</span>
-                    <span className="detail-value" style={{ fontSize: '0.9rem' }}>{localeDigits(item.driver_id) || "Not linked"}</span>
+                {/* Metadata block */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', background: 'var(--bg-inset, #f8fafc)', padding: '16px', borderRadius: '16px', border: '1px solid var(--border-color, #e2e8f0)' }}>
+                  <div>
+                    <span style={{ fontSize: '0.62rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Driver ID</span>
+                    <span style={{ fontSize: '0.85rem', fontWeight: 800, color: 'var(--text-primary, #1e293b)', fontFamily: 'monospace' }}>
+                      {localeDigits(item.driver_id) || "Not linked"}
+                    </span>
+                  </div>
+                  <div>
+                    <span style={{ fontSize: '0.62rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Dispatch Status</span>
+                    <span style={{ fontSize: '0.85rem', fontWeight: 800, color: 'var(--text-primary, #1e293b)' }}>
+                      {item.unassigned ? "Unassigned" : item.assigned ? "Assigned" : "Unknown"}
+                    </span>
                   </div>
                 </div>
               </div>
