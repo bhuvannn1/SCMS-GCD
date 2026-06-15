@@ -28,7 +28,7 @@ const Auth = () => {
       if (error) setError(error.message)
     } else {
       const roleMap = {
-        seller: "owner",
+        seller: "seller",
         buyer: "buyer",
         driver: "driver"
       };
