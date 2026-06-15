@@ -104,9 +104,6 @@ const generateInvoiceHTML = (inv) => {
     txHash = `0x${rawId.slice(4, 10)}...${rawId.slice(-4)}`;
   }
 
-  // Verification URL & QR code
-  const verificationUrl = `${window.location.origin}/buyer/invoices?verifyPaymentId=${inv.razorpay_payment_id || "pay_T1UymZ26zV4bC0"}`;
-
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
