@@ -6,7 +6,6 @@ import {
 } from "lucide-react";
 import KineticLoader from "../components/KineticLoader";
 
-const API_BASE = process.env.REACT_APP_API_URL || "http://localhost:5000";
 
 const emptyForm = {
   name: "",
@@ -47,18 +46,24 @@ const BuyerWarehouses = () => {
   }, []);
 
   const fetchWarehouses = async (buyerId) => {
-    setLoading(true);
-    try {
-      const res = await fetch(`${API_BASE}/api/buyer-warehouses?buyer_id=${buyerId}`);
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to fetch");
-      setWarehouses(data.warehouses || []);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
+  setLoading(true);
+
+  try {
+    const { data, error } = await supabase
+      .from("buyer_warehouses")
+      .select("*")
+      .eq("buyer_id", buyerId)
+      .order("is_default", { ascending: false });
+
+    if (error) throw error;
+
+    setWarehouses(data || []);
+  } catch (err) {
+    setError(err.message);
+  } finally {
+    setLoading(false);
+  }
+};
 
   const showSuccess = (msg) => {
     setSuccessMsg(msg);
@@ -94,71 +99,91 @@ const BuyerWarehouses = () => {
   };
 
   const handleFormSubmit = async (e) => {
-    e.preventDefault();
-    setFormLoading(true);
-    setFormError(null);
+  e.preventDefault();
+  setFormLoading(true);
+  setFormError(null);
 
-    try {
-      const payload = { ...form, buyer_id: userId };
-      let res;
+  try {
+    const payload = {
+      ...form,
+      buyer_id: userId,
+    };
 
-      if (editingId) {
-        res = await fetch(`${API_BASE}/api/buyer-warehouses/${editingId}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-      } else {
-        res = await fetch(`${API_BASE}/api/buyer-warehouses`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-      }
+    if (editingId) {
+      const { error } = await supabase
+        .from("buyer_warehouses")
+        .update(payload)
+        .eq("id", editingId);
 
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to save");
+      if (error) throw error;
+    } else {
+      const { error } = await supabase
+        .from("buyer_warehouses")
+        .insert([payload]);
 
-      setIsModalOpen(false);
-      fetchWarehouses(userId);
-      showSuccess(editingId ? "Warehouse updated successfully!" : "Warehouse added successfully!");
-    } catch (err) {
-      setFormError(err.message);
-    } finally {
-      setFormLoading(false);
+      if (error) throw error;
     }
-  };
+
+    setIsModalOpen(false);
+
+    await fetchWarehouses(userId);
+
+    showSuccess(
+      editingId
+        ? "Warehouse updated successfully!"
+        : "Warehouse added successfully!"
+    );
+  } catch (err) {
+    setFormError(err.message);
+  } finally {
+    setFormLoading(false);
+  }
+};
 
   const handleDelete = async (id) => {
-    try {
-      const res = await fetch(`${API_BASE}/api/buyer-warehouses/${id}`, {
-        method: "DELETE",
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to delete");
-      setDeleteConfirmId(null);
-      fetchWarehouses(userId);
-      showSuccess("Warehouse deleted.");
-    } catch (err) {
-      setError(err.message);
-    }
-  };
+  try {
+    const { error } = await supabase
+      .from("buyer_warehouses")
+      .delete()
+      .eq("id", id);
+
+    if (error) throw error;
+
+    setDeleteConfirmId(null);
+
+    await fetchWarehouses(userId);
+
+    showSuccess("Warehouse deleted.");
+  } catch (err) {
+    setError(err.message);
+  }
+};
 
   const handleSetDefault = async (wh) => {
-    try {
-      const res = await fetch(`${API_BASE}/api/buyer-warehouses/${wh.id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ buyer_id: userId, is_default: true }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to update");
-      fetchWarehouses(userId);
-      showSuccess(`"${wh.name}" is now your primary delivery destination.`);
-    } catch (err) {
-      setError(err.message);
-    }
-  };
+  try {
+    const { error: clearError } = await supabase
+      .from("buyer_warehouses")
+      .update({ is_default: false })
+      .eq("buyer_id", userId);
+
+    if (clearError) throw clearError;
+
+    const { error } = await supabase
+      .from("buyer_warehouses")
+      .update({ is_default: true })
+      .eq("id", wh.id);
+
+    if (error) throw error;
+
+    await fetchWarehouses(userId);
+
+    showSuccess(
+      `"${wh.name}" is now your primary delivery destination.`
+    );
+  } catch (err) {
+    setError(err.message);
+  }
+};
 
   if (loading) {
     return <KineticLoader message="Loading your warehouses..." />;
