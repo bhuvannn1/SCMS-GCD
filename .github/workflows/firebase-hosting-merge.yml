@@ -18,3 +18,4 @@ jobs:
           firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_SCMS_LIVE_499516 }}
           channelId: live
           projectId: scms-live-499516
+          entryPoint: scms
