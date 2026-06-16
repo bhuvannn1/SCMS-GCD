@@ -107,28 +107,137 @@ app.post("/api/ai/chat", async (req, res) => {
         console.warn("Fallback role parsing warning:", parseErr.message);
       }
 
-      const query = userQuestion.toLowerCase();
-      let responseText = "";
+      // Heuristic Intent Classifiers
+      const isWarehouse = query.includes("warehouse") || query.includes("virus") || query.includes("vairus") || query.includes("storage") || query.includes("depot") || query.includes("hub");
+      const isOrder = query.includes("order") || query.includes("oder") || query.includes("load") || query.includes("purchase") || query.includes("delivery");
+      const isDriver = query.includes("driver") || query.includes("availability") || query.includes("active") || query.includes("free") || query.includes("idle");
+      const isFleet = query.includes("fleet") || query.includes("truck") || query.includes("vehicle") || query.includes("track") || query.includes("location");
+      const isSummary = query.includes("summary") || query.includes("today") || query.includes("status");
 
-      // 1. Check for drivers / availability query
-      if (query.includes("driver") || query.includes("availability")) {
-        const drivers = contextData.drivers || [];
-        if (drivers.length === 0) {
-          responseText = "I couldn't find any driver availability information in the current database context.";
-        } else {
-          responseText = "Here is the current driver status and availability:\n";
-          drivers.forEach((d, idx) => {
-            responseText += `\n${idx + 1}. **${d.driver_name || 'Driver'}**\n`;
-            responseText += `   - **Status**: ${d.status || 'Inactive'}\n`;
-            responseText += `   - **Verified**: ${d.verified ? 'Yes' : 'No'}\n`;
-            if (d.license_number) {
-              responseText += `   - **License**: ${d.license_number}\n`;
-            }
+      // 1. Warehouse Queries
+      if (isWarehouse) {
+        let warehouses = contextData.warehouses || [];
+
+        // Check if asking about capacity, fill rate, percentage, overflow, or above 85%
+        if (query.includes("percent") || query.includes("%") || query.includes("fill") || query.includes("capacity") || query.includes("overflow") || query.includes("above") || query.includes("exceed")) {
+          let pctThreshold = 85; // default
+          const pctMatch = query.match(/(\d+)\s*%/);
+          const numMatch = query.match(/above\s+(\d+)/) || query.match(/exceeding\s+(\d+)/) || query.match(/over\s+(\d+)/);
+          
+          if (pctMatch) {
+            pctThreshold = parseInt(pctMatch[1]);
+          } else if (numMatch) {
+            pctThreshold = parseInt(numMatch[1]);
+          }
+
+          const overflowing = warehouses.filter(w => {
+            const cap = w.max_capacity || 1;
+            const load = w.current_load + (w.reserved_space || 0);
+            return (load / cap) * 100 > pctThreshold;
           });
+
+          if (overflowing.length === 0) {
+            responseText = `Based on the database context, there are **0** warehouses filled above ${pctThreshold}% capacity.`;
+          } else {
+            responseText = `There are **${overflowing.length}** warehouses filled above ${pctThreshold}% capacity:\n`;
+            overflowing.forEach((w, idx) => {
+              const cap = w.max_capacity || 1;
+              const load = w.current_load + (w.reserved_space || 0);
+              const fillPct = Math.round((load / cap) * 100);
+              responseText += `\n${idx + 1}. **${w.name}**: ${fillPct}% filled (${load}/${w.max_capacity} units)`;
+            });
+          }
+        } else {
+          // Dynamic filtering by city / location
+          const cities = ["bangalore", "bengaluru", "mumbai", "delhi", "chennai", "kolkata", "pune", "ahmedabad", "jaipur", "lucknow", "surat", "nagpur", "bhopal", "patna", "chandigarh", "kochi", "indore", "coimbatore", "visakhapatnam", "vadodara", "rajkot", "guwahati", "thiruvananthapuram", "raipur", "amritsar", "jodhpur", "mangaluru", "varanasi", "bhubaneswar", "nashik", "noida", "gurgaon"];
+          let filterCity = null;
+          for (const city of cities) {
+            if (query.includes(city)) {
+              filterCity = city;
+              break;
+            }
+          }
+
+          if (filterCity) {
+            warehouses = warehouses.filter(w => 
+              (w.city && w.city.toLowerCase().includes(filterCity)) || 
+              (w.name && w.name.toLowerCase().includes(filterCity)) ||
+              (w.address && w.address.toLowerCase().includes(filterCity))
+            );
+          }
+
+          if (warehouses.length === 0) {
+            responseText = filterCity 
+              ? `I couldn't find any warehouses in ${filterCity.toUpperCase()} registered under your profile.`
+              : "I couldn't find any warehouses registered under your profile.";
+          } else {
+            responseText = filterCity
+              ? `Here are your destination warehouses in ${filterCity.toUpperCase()}:\n`
+              : `Here are your destination warehouses:\n`;
+            warehouses.forEach((w, idx) => {
+              responseText += `\n${idx + 1}. **${w.name}**\n`;
+              responseText += `   - **Address**: ${w.address || ''}, ${w.city || ''}\n`;
+              if (w.contact_name) {
+                responseText += `   - **Contact**: ${w.contact_name} (${w.contact_phone || ''})\n`;
+              }
+            });
+          }
         }
       }
-      // 2. Check for today's summary / operations summary
-      else if (query.includes("summary") || query.includes("today")) {
+      // 2. Driver Queries
+      else if (isDriver) {
+        const drivers = contextData.drivers || [];
+        const activeDrivers = drivers.filter(d => (d.status || '').toLowerCase() === 'active');
+        
+        if (query.includes("how many") || query.includes("count") || query.includes("number") || query.includes("summary")) {
+          responseText = `There are **${drivers.length}** total drivers registered. Currently, **${activeDrivers.length}** are active/available.`;
+        } else {
+          if (drivers.length === 0) {
+            responseText = "I couldn't find any driver availability information in the database.";
+          } else {
+            responseText = "Here is the current driver status and availability:\n";
+            drivers.forEach((d, idx) => {
+              responseText += `\n${idx + 1}. **${d.driver_name || 'Driver'}**\n`;
+              responseText += `   - **Status**: ${d.status || 'Inactive'}\n`;
+              responseText += `   - **Verified**: ${d.verified ? 'Yes' : 'No'}\n`;
+            });
+          }
+        }
+      }
+      // 3. Orders Queries
+      else if (isOrder) {
+        let orders = contextData.orders || contextData.recentOrders || [];
+        
+        if (query.includes("how many") || query.includes("count") || query.includes("number")) {
+          const pending = orders.filter(o => (o.status || '').toLowerCase() === 'pending').length;
+          const confirmed = orders.filter(o => (o.status || '').toLowerCase() === 'confirmed').length;
+          const delivered = orders.filter(o => (o.status || '').toLowerCase() === 'delivered').length;
+          responseText = `There are **${orders.length}** total orders: **${confirmed}** confirmed, **${pending}** pending, and **${delivered}** delivered.`;
+        } else {
+          // Check for status filters
+          if (query.includes("pending")) {
+            orders = orders.filter(o => (o.status || '').toLowerCase() === 'pending');
+          } else if (query.includes("confirm")) {
+            orders = orders.filter(o => (o.status || '').toLowerCase() === 'confirmed');
+          } else if (query.includes("deliver")) {
+            orders = orders.filter(o => (o.status || '').toLowerCase() === 'delivered');
+          }
+
+          if (orders.length === 0) {
+            responseText = "No matching orders found in the database context.";
+          } else {
+            responseText = `Here is the status of the orders:\n`;
+            orders.forEach((o, idx) => {
+              responseText += `\n${idx + 1}. **Order ID**: ${o.load_id || 'N/A'}\n`;
+              responseText += `   - **Status**: ${o.status || 'Pending'}\n`;
+              responseText += `   - **Route**: ${o.pickup || 'TBD'} ➔ ${o.drop || 'TBD'}\n`;
+              responseText += `   - **Payment Status**: ${o.payment_status || 'Unpaid'}\n`;
+            });
+          }
+        }
+      }
+      // 4. Operations Summary Queries
+      else if (isSummary) {
         const warehouses = contextData.warehouses || [];
         const orders = contextData.orders || [];
         const fleet = contextData.fleet || [];
@@ -138,78 +247,12 @@ app.post("/api/ai/chat", async (req, res) => {
                        `- **Fleet Size**: ${fleet.length}\n\n` +
                        `Everything is running smoothly!`;
       }
-      // 3. Check for orders / loads query
-      else if (query.includes("order") || query.includes("oder") || query.includes("load") || query.includes("purchase")) {
-        const orders = contextData.orders || contextData.recentOrders || [];
-        if (orders.length === 0) {
-          responseText = "You do not have any active or historical orders assigned to your account currently.";
-        } else {
-          responseText = `Here is the status of your current orders:\n`;
-          orders.forEach((o, idx) => {
-            responseText += `\n${idx + 1}. **Order ID**: ${o.load_id || 'N/A'}\n`;
-            responseText += `   - **Status**: ${o.status || 'Pending'}\n`;
-            responseText += `   - **Route**: ${o.pickup || 'TBD'} ➔ ${o.drop || 'TBD'}\n`;
-            if (o.buyer_amount) {
-              responseText += `   - **Price**: ₹${Number(o.buyer_amount).toLocaleString("en-IN")}\n`;
-            }
-            responseText += `   - **Payment Status**: ${o.payment_status || 'Unpaid'}\n`;
-          });
-          
-          if (userRole === "buyer") {
-            responseText += `\n*Recommendation*: For any unpaid orders, you can click the "Pay Now" button in your Purchases tab to complete the payment.`;
-          } else if (userRole === "driver") {
-            responseText += `\n*Recommendation*: Tap the "Navigate" button next to any assigned load to open directions in Google Maps.`;
-          }
-        }
-      }
-      // 4. Check for warehouses
-      else if (query.includes("warehouse")) {
-        let warehouses = contextData.warehouses || [];
-        
-        // Dynamic filtering by city / location
-        const cities = ["bangalore", "bengaluru", "mumbai", "delhi", "chennai", "kolkata", "pune", "ahmedabad", "jaipur", "lucknow", "surat", "nagpur", "bhopal", "patna", "chandigarh", "kochi", "indore", "coimbatore", "visakhapatnam", "vadodara", "rajkot", "guwahati", "thiruvananthapuram", "raipur", "amritsar", "jodhpur", "mangaluru", "varanasi", "bhubaneswar", "nashik", "noida", "gurgaon"];
-        let filterCity = null;
-        for (const city of cities) {
-          if (query.includes(city)) {
-            filterCity = city;
-            break;
-          }
-        }
-
-        if (filterCity) {
-          warehouses = warehouses.filter(w => 
-            (w.city && w.city.toLowerCase().includes(filterCity)) || 
-            (w.name && w.name.toLowerCase().includes(filterCity)) ||
-            (w.address && w.address.toLowerCase().includes(filterCity))
-          );
-        }
-
-        if (warehouses.length === 0) {
-          responseText = filterCity 
-            ? `I couldn't find any warehouses in ${filterCity.toUpperCase()} registered under your profile.`
-            : "I couldn't find any warehouses registered under your profile.";
-        } else {
-          responseText = filterCity
-            ? `Here are your destination warehouses in ${filterCity.toUpperCase()}:\n`
-            : `Here are your destination warehouses:\n`;
-          warehouses.forEach((w, idx) => {
-            responseText += `\n${idx + 1}. **${w.name}**\n`;
-            responseText += `   - **Address**: ${w.address || ''}, ${w.city || ''}\n`;
-            if (w.contact_name) {
-              responseText += `   - **Contact**: ${w.contact_name} (${w.contact_phone || ''})\n`;
-            }
-            if (w.is_default) {
-              responseText += `   - *Primary Delivery Destination*\n`;
-            }
-          });
-        }
-      }
-      // 5. Check for fleet / vehicle / tracking
-      else if (query.includes("fleet") || query.includes("truck") || query.includes("vehicle") || query.includes("track")) {
+      // 5. Fleet / Trucks Queries
+      else if (isFleet) {
         const fleet = contextData.fleet || contextData.fleetStatus || [];
         const fleetArr = Array.isArray(fleet) ? fleet : (fleet ? [fleet] : []);
         if (fleetArr.length === 0) {
-          responseText = "No active fleet or truck tracking details found for your orders.";
+          responseText = "No active fleet or truck tracking details found.";
         } else {
           responseText = `Here is the active fleet tracking status:\n`;
           fleetArr.forEach((f, idx) => {
@@ -219,9 +262,9 @@ app.post("/api/ai/chat", async (req, res) => {
           });
         }
       }
-      // 6. Default general fallback
+      // 6. Generic Fallback
       else {
-        responseText = "I am operating in Offline/Fallback mode because the server's Gemini API Key has been flagged as leaked. Please update the API key on the backend.\n\n" +
+        responseText = "I am operating in Offline/Fallback mode because the server's Gemini API Key has been flagged as leaked.\n\n" +
                        "You can ask about your **orders**, **warehouses**, **drivers**, or **fleet status**, and I will fetch them directly from the database context!";
       }
 
