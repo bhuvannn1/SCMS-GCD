@@ -336,7 +336,7 @@ export default function OverflowPredictionWidget({ warehouseId }) {
           {error}
           <br />
           <span style={{ color: "#9ca3af", fontSize: "12px" }}>
-            Make sure <code>python api.py</code> is running on port 5001.
+            Live ML Engine unreachable.
           </span>
         </div>
       )}
