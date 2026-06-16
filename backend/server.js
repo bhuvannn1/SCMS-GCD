@@ -93,8 +93,36 @@ app.post("/api/ai/chat", async (req, res) => {
       const query = userQuestion.toLowerCase();
       let responseText = "";
 
-      // 1. Check for orders / loads query
-      if (query.includes("order") || query.includes("load") || query.includes("purchase")) {
+      // 1. Check for drivers / availability query
+      if (query.includes("driver") || query.includes("availability")) {
+        const drivers = contextData.drivers || [];
+        if (drivers.length === 0) {
+          responseText = "I couldn't find any driver availability information in the current database context.";
+        } else {
+          responseText = "Here is the current driver status and availability:\n";
+          drivers.forEach((d, idx) => {
+            responseText += `\n${idx + 1}. **${d.driver_name || 'Driver'}**\n`;
+            responseText += `   - **Status**: ${d.status || 'Inactive'}\n`;
+            responseText += `   - **Verified**: ${d.verified ? 'Yes' : 'No'}\n`;
+            if (d.license_number) {
+              responseText += `   - **License**: ${d.license_number}\n`;
+            }
+          });
+        }
+      }
+      // 2. Check for today's summary / operations summary
+      else if (query.includes("summary") || query.includes("today")) {
+        const warehouses = contextData.warehouses || [];
+        const orders = contextData.orders || [];
+        const fleet = contextData.fleet || [];
+        responseText = `**Today's Operations Summary**:\n\n` +
+                       `- **Active Warehouses**: ${warehouses.length}\n` +
+                       `- **Total Orders**: ${orders.length}\n` +
+                       `- **Fleet Size**: ${fleet.length}\n\n` +
+                       `Everything is running smoothly!`;
+      }
+      // 3. Check for orders / loads query
+      else if (query.includes("order") || query.includes("load") || query.includes("purchase")) {
         const orders = contextData.orders || contextData.recentOrders || [];
         if (orders.length === 0) {
           responseText = "You do not have any active or historical orders assigned to your account currently.";
@@ -117,7 +145,7 @@ app.post("/api/ai/chat", async (req, res) => {
           }
         }
       }
-      // 2. Check for warehouses
+      // 4. Check for warehouses
       else if (query.includes("warehouse")) {
         const warehouses = contextData.warehouses || [];
         if (warehouses.length === 0) {
@@ -136,7 +164,7 @@ app.post("/api/ai/chat", async (req, res) => {
           });
         }
       }
-      // 3. Check for fleet / vehicle / tracking
+      // 5. Check for fleet / vehicle / tracking
       else if (query.includes("fleet") || query.includes("truck") || query.includes("vehicle") || query.includes("track")) {
         const fleet = contextData.fleet || contextData.fleetStatus || [];
         const fleetArr = Array.isArray(fleet) ? fleet : (fleet ? [fleet] : []);
@@ -151,10 +179,10 @@ app.post("/api/ai/chat", async (req, res) => {
           });
         }
       }
-      // 4. Default general fallback
+      // 6. Default general fallback
       else {
         responseText = "I am operating in Offline/Fallback mode because the server's Gemini API Key has been flagged as leaked. Please update the API key on the backend.\n\n" +
-                       "You can ask about your **orders**, **warehouses**, or **fleet status**, and I will fetch them directly from the database context!";
+                       "You can ask about your **orders**, **warehouses**, **drivers**, or **fleet status**, and I will fetch them directly from the database context!";
       }
 
       return res.json({ text: responseText });
