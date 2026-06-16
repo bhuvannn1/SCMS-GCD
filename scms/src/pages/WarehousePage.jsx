@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { AlertTriangle, Building2, TrendingUp, Search, ArrowUpDown, X, SearchX } from 'lucide-react';
+import { AlertTriangle, Activity, RefreshCw, Building2, TrendingUp, Search, ArrowUpDown, X, SearchX } from 'lucide-react';
 import supabase from '../config/SupabaseClient';
 import EmptyState, { getFriendlyError } from '../components/EmptyState';
 import useWarehouseMonitor from '../hooks/useWarehouseMonitor';
@@ -362,18 +362,80 @@ const WarehousePage = () => {
     };
 
     return (
-        <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 40px)', padding: '20px', boxSizing: 'border-box', position: 'relative', color: 'var(--text-primary)', backgroundColor: 'var(--bg-primary)', transition: 'background-color 0.3s ease, color 0.3s ease' }}>
-            
-            {/* Header Area */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-                <div>
-                    <h1 style={{ margin: '0', fontSize: '28px', color: 'var(--accent)', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                        Warehouse Control Center
-                    </h1>
-                    <p style={{ margin: '4px 0 0 0', color: 'var(--text-secondary)', fontSize: '0.9rem', fontWeight: '600' }}>
-                        Real-time Warehouse Capacity & Network Monitoring
-                    </p>
-                </div>
+        <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 40px)', padding: '20px', boxSizing: 'border-box', position: 'relative', color: 'var(--text-primary)' }}>
+            <style>{`
+                @keyframes pulsingRisk {
+                    0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+                    70% { box-shadow: 0 0 0 8px rgba(239, 68, 68, 0); }
+                    100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+                }
+                .pulsing-risk-badge {
+                    animation: pulsingRisk 2s infinite;
+                }
+                @keyframes spin {
+                    from { transform: rotate(0deg); }
+                    to { transform: rotate(360deg); }
+                }
+                .spin-animation {
+                    animation: spin 1.5s linear infinite;
+                    display: inline-block;
+                }
+            `}</style>
+
+            <h1 style={{ margin: '0 0 24px 0', fontSize: '28px', color: 'var(--accent)', fontWeight: '800', textTransform: 'uppercase' }}>Warehouse Control Center</h1>
+
+            {/* View Selection Tabs */}
+            <div style={{
+                display: 'flex',
+                gap: '12px',
+                marginBottom: '20px',
+                borderBottom: '1px solid var(--border-color)',
+                paddingBottom: '12px'
+            }}>
+                <button
+                    onClick={() => setActiveTab('map')}
+                    style={{
+                        padding: '10px 20px',
+                        borderRadius: '8px',
+                        border: 'none',
+                        backgroundColor: activeTab === 'map' ? 'var(--accent)' : 'var(--bg-card)',
+                        color: activeTab === 'map' ? 'white' : 'var(--text-secondary)',
+                        fontWeight: '800',
+                        fontSize: '0.85rem',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s',
+                        boxShadow: activeTab === 'map' ? '0 4px 12px rgba(249, 115, 22, 0.2)' : 'none',
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.05em'
+                    }}
+                >
+                    Live Operations Map
+                </button>
+                <button
+                    onClick={() => {
+                        setActiveTab('ml_predictions');
+                        fetchPredictions();
+                    }}
+                    style={{
+                        padding: '10px 20px',
+                        borderRadius: '8px',
+                        border: 'none',
+                        backgroundColor: activeTab === 'ml_predictions' ? 'var(--accent)' : 'var(--bg-card)',
+                        color: activeTab === 'ml_predictions' ? 'white' : 'var(--text-secondary)',
+                        fontWeight: '800',
+                        fontSize: '0.85rem',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s',
+                        boxShadow: activeTab === 'ml_predictions' ? '0 4px 12px rgba(249, 115, 22, 0.2)' : 'none',
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.05em',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px'
+                    }}
+                >
+                    <Activity size={16} /> ML Overflow Forecast
+                </button>
             </div>
 
             {activeTab === 'ml_predictions' ? (
@@ -440,27 +502,41 @@ const WarehousePage = () => {
                         </div>
                     </div>
 
-                    {/* Warehouse Scrollable List */}
-                    <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                        {sortedWarehouses.length === 0 ? (
-                            <EmptyState
-                                icon={SearchX}
-                                title="No Matching Warehouses"
-                                message="Adjust your search or filters to locate other warehouses."
-                                size="sm"
-                                style={{ padding: '20px 0' }}
-                            />
-                        ) : (
-                            sortedWarehouses.map((w) => {
-                                const capacity = w.max_capacity || 1;
-                                const totalLoad = w.current_load + w.reserved_space;
-                                const fillPercent = Math.round((totalLoad / capacity) * 100);
-                                const isOverflowing = fillPercent > 85;
-                                
-                                let borderLeftColor = '#22c55e'; // green
-                                let badgeText = 'NORMAL';
-                                let badgeColor = '#22c55e';
-                                let badgeBg = 'rgba(34, 197, 94, 0.1)';
+                    {/* Main predictions split layout */}
+                    <div style={{ display: 'flex', gap: '20px', flex: 1, minHeight: 0 }}>
+                        {/* Left split: Forecast Table */}
+                        <div style={{
+                            flex: 1.3,
+                            backgroundColor: 'var(--bg-card)',
+                            border: '1px solid var(--border-color)',
+                            borderRadius: '12px',
+                            padding: '20px',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            boxSizing: 'border-box',
+                            minHeight: 0
+                        }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                                <h3 style={{ margin: 0, fontSize: '1.1rem', color: 'var(--accent)', fontWeight: 'bold', textTransform: 'uppercase' }}>ML Overflow Forecasts</h3>
+                                <button
+                                    onClick={fetchPredictions}
+                                    disabled={loadingPredictions}
+                                    style={{
+                                        border: '1px solid var(--border-color)',
+                                        backgroundColor: 'var(--bg-primary)',
+                                        color: 'var(--text-primary)',
+                                        borderRadius: '8px',
+                                        padding: '6px 12px',
+                                        fontSize: '0.8rem',
+                                        cursor: 'pointer',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '6px'
+                                    }}>
+                                    <RefreshCw size={12} className={loadingPredictions ? "spin-animation" : ""} />
+                                    {loadingPredictions ? "Predicting..." : "Run Forecast"}
+                                </button>
+                            </div>
 
                             {/* Predictions List Container */}
                             <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '10px' }}>
@@ -947,8 +1023,8 @@ const WarehousePage = () => {
                             </div>
                         )}
                         {errorMessage && (
-                            <div style={{ padding: '12px 16px', backgroundColor: 'rgba(239, 68, 68, 0.15)', border: '1px solid #ef4444', borderRadius: '8px', color: '#ef4444', fontWeight: '600', fontSize: '0.9rem' }}>
-                                {getFriendlyError(errorMessage)}
+                            <div style={{ padding: '12px 16px', backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', color: '#ef4444', fontWeight: '600', fontSize: '0.9rem' }}>
+                                {errorMessage}
                             </div>
                         )}
 
@@ -1059,12 +1135,9 @@ const WarehousePage = () => {
                                 backgroundColor: '#f8fafc'
                             }}>
                                 {alternatives.length === 0 ? (
-                                    <EmptyState
-                                        icon={SearchX}
-                                        title="No Alternative Warehouses"
-                                        message="No warehouses match your current search or filter criteria. Try adjusting your filters."
-                                        size="sm"
-                                    />
+                                    <div style={{ padding: '20px', textAlign: 'center', color: '#64748b', fontSize: '0.9rem' }}>
+                                        No alternative warehouses found matching the options.
+                                    </div>
                                 ) : (
                                     alternatives.map((wh) => {
                                         const currentFill = Math.round(wh.fillPercent * 100);

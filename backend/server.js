@@ -299,11 +299,10 @@ app.post("/api/warehouse/reroute", async (req, res) => {
 // ────────────────────────────────────────────────────────────────────────────
 app.post("/api/admin/create-user", async (req, res) => {
   try {
-    const { email, password, full_name, display_name, phone, role, license_number, status } = req.body;
-    const resolvedName = full_name || display_name;
+    const { email, password, full_name, phone, role, license_number, status } = req.body;
 
-    if (!email || !password || !role || !resolvedName) {
-      return res.status(400).json({ error: "Email, password, role, and name/full_name are required." });
+    if (!email || !password || !role || !full_name) {
+      return res.status(400).json({ error: "Email, password, role, and full_name are required." });
     }
 
     // 1. Create auth user
@@ -311,7 +310,7 @@ app.post("/api/admin/create-user", async (req, res) => {
       email,
       password,
       email_confirm: true,
-      user_metadata: { role, full_name: resolvedName, display_name: resolvedName }
+      user_metadata: { role, full_name }
     });
 
     if (authError) {
@@ -328,7 +327,7 @@ app.post("/api/admin/create-user", async (req, res) => {
         id: userId,
         email,
         role,
-        full_name: resolvedName,
+        full_name,
         phone: phone || null
       });
 
@@ -747,153 +746,61 @@ app.get("/api/route/optimize", async (req, res) => {
     const route = osrmData.routes[0];
     const distanceKm = route.distance / 1000;
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // INDIA PRACTICAL LOGISTICS FORMULA — Single Driver, Dedicated FTL Truck
-    // Sources: Motor Vehicles Act, OSRM road distance, industry standard rates
-    // ─────────────────────────────────────────────────────────────────────────
+    // Practical Commercial Truck speed including mandatory rests & border stops: 40 km/h average
+    const TRUCK_SPEED_KMH = 40.0;
+    const durationSec = (distanceKm / TRUCK_SPEED_KMH) * 3600;
 
-    /**
-     * Terrain classifier: hilly routes add significant driving time.
-     * We approximate ghat/hill % by geography (lat/lng bounding boxes).
-     * Known hilly corridors: Western Ghats (BLR-MUM, BLR-GOA),
-     *   Northeast (any route east of ~91°E), J&K (routes above ~32°N lat).
-     */
-    function classifyTerrain(p, d) {
-      const [pLat, pLng] = p;
-      const [dLat, dLng] = d;
-      // Northeast India corridor (Guwahati, Shillong, Agartala, etc.)
-      if (pLng > 91 || dLng > 91) return { plainFraction: 0.30, hillyFraction: 0.70 };
-      // Jammu & Kashmir corridor
-      if ((pLat > 32 || dLat > 32) && (pLng < 78 || dLng < 78)) return { plainFraction: 0.40, hillyFraction: 0.60 };
-      // Western Ghat corridor: Bangalore ↔ Mumbai, Bangalore ↔ Goa, Hyderabad ↔ Goa
-      const blrLat = [12.5, 13.5]; const blrLng = [77.3, 78.0];
-      const mumLat = [18.8, 19.4]; const mumLng = [72.6, 73.2];
-      const isBlr = pLat >= blrLat[0] && pLat <= blrLat[1] && pLng >= blrLng[0] && pLng <= blrLng[1];
-      const isDestBlr = dLat >= blrLat[0] && dLat <= blrLat[1] && dLng >= blrLng[0] && dLng <= blrLng[1];
-      const isMum = (pLat >= mumLat[0] && pLat <= mumLat[1] && pLng >= mumLng[0] && pLng <= mumLng[1]);
-      const isDestMum = (dLat >= mumLat[0] && dLat <= mumLat[1] && dLng >= mumLng[0] && dLng <= mumLng[1]);
-      if ((isBlr && isDestMum) || (isMum && isDestBlr)) return { plainFraction: 0.60, hillyFraction: 0.40 };
-      // Default: plain highway (NH-44, NH-48, etc.)
-      return { plainFraction: 1.00, hillyFraction: 0.00 };
-    }
+    // Constants for calculations
+    const FUEL_PRICE = 95.0; // INR per liter
+    const FUEL_EFFICIENCY = 4.0; // km per liter
+    const CO2_COEFFICIENT = 2.68; // kg CO2 per liter
 
-    const terrain = classifyTerrain(pickupCoords, dropCoords);
+    // Optimized stats
+    const optDistance = distanceKm;
+    const optDuration = durationSec;
+    const optFuel = optDistance / FUEL_EFFICIENCY;
+    const optCost = optFuel * FUEL_PRICE;
+    const optCO2 = optFuel * CO2_COEFFICIENT;
 
-    // Speed by terrain (loaded heavy truck averages)
-    const SPEED_PLAIN_KMH  = 45; // NH national highways, flat terrain
-    const SPEED_HILLY_KMH  = 25; // Ghat sections, mountain passes
+    // Naive baseline (Simulated standard route: +25% distance, +40% duration)
+    const naiveDistance = optDistance * 1.25;
+    const naiveDuration = optDuration * 1.40;
+    const naiveFuel = naiveDistance / FUEL_EFFICIENCY;
+    const naiveCost = naiveFuel * FUEL_PRICE;
+    const naiveCO2 = naiveFuel * CO2_COEFFICIENT;
 
-    // Fuel efficiency by terrain (loaded 10–16 wheeler)
-    const MILEAGE_PLAIN_KMPL = 4.0; // km per liter, plain highway
-    const MILEAGE_HILLY_KMPL = 2.5; // km per liter, ghat/mountain terrain
-
-    // Cost & emission constants
-    const FUEL_PRICE       = 98.0; // INR per liter (all-India avg Jun 2025)
-    const CO2_COEFFICIENT  = 2.68; // kg CO₂ per liter diesel (IPCC standard)
-
-    // ── Step 1: Pure Driving Time (by terrain split) ──────────────────────────
-    const plainKm = distanceKm * terrain.plainFraction;
-    const hillyKm = distanceKm * terrain.hillyFraction;
-    const pureDriverHours = (plainKm / SPEED_PLAIN_KMH) + (hillyKm / SPEED_HILLY_KMH);
-
-    // ── Step 2: Short Breaks — 30 min every 200 km (tea/tyre cooldown) ────────
-    const shortBreaks = Math.floor(distanceKm / 200);
-    const shortBreakHours = shortBreaks * 0.5;
-
-    // ── Step 3: Meal Breaks — 1 hour every 400 km (dhaba stop + vehicle check) -
-    const mealBreaks = Math.floor(distanceKm / 400);
-    const mealBreakHours = mealBreaks * 1.0;
-
-    // ── Step 4: Mandatory Overnight Rest — 8 hours per every 8h of driving ────
-    // Legal limit: Motor Vehicles Act — max 8h drive/day, single driver
-    const overnightRestStops = Math.floor(pureDriverHours / 8);
-    const overnightRestHours = overnightRestStops * 8;
-
-    // ── Step 5: Checkpoint / Border / City No-Entry Delays ────────────────────
-    // 1.5h per every 500km: state borders, RTO weighbridges, city no-entry hours
-    const checkpointStops = Math.floor(distanceKm / 500);
-    const checkpointHours = checkpointStops * 1.5;
-
-    // ── Total Logistical Transit Time (Strict Formula) ────────────────────────
-    const totalDistance = distanceKm;
-    const breakHours = shortBreakHours + mealBreakHours + overnightRestHours;
-    const checkpointDelays = checkpointHours;
-    
-    // Total Transit Time (Hours) = (Total Distance / Average Speed by Terrain) + Break Hours + Checkpoint Delays
-    const totalTransitTimeHours = pureDriverHours + breakHours + checkpointDelays;
-    
-    // Total Days = Total Transit Time (Hours) / 24 Hours
-    const totalDays = totalTransitTimeHours / 24;
-
-    const durationSec = totalTransitTimeHours * 3600;
-
-    // ── Fuel & CO₂ (terrain-weighted) ────────────────────────────────────────
-    const optFuelLiters = (plainKm / MILEAGE_PLAIN_KMPL) + (hillyKm / MILEAGE_HILLY_KMPL);
-    const optFuelCost   = optFuelLiters * FUEL_PRICE;
-    const optCO2        = optFuelLiters * CO2_COEFFICIENT;
-
-    // ── Logistical Breakdown (returned for UI display) ────────────────────────
-    const breakdown = {
-      pure_driving_hours:    parseFloat(pureDriverHours.toFixed(2)),
-      break_hours:           parseFloat(breakHours.toFixed(2)),
-      checkpoint_delays:     parseFloat(checkpointDelays.toFixed(2)),
-      total_hours:           parseFloat(totalTransitTimeHours.toFixed(2)),
-      total_days:            parseFloat(totalDays.toFixed(2)),
-      terrain_type:          terrain.hillyFraction > 0.3 ? (terrain.hillyFraction > 0.5 ? "Mountainous" : "Mixed") : "Plain",
-      plain_km:              parseFloat(plainKm.toFixed(1)),
-      hilly_km:              parseFloat(hillyKm.toFixed(1)),
-      legal_note:            "Calculations comply with Motor Vehicles Act: ≤8h driving/day, 30-min break every 5h, mandatory 8h overnight rest."
-    };
-
-    // ── Naive Baseline: unoptimized route (shared load, no GPS, extra stops) ──
-    // Shared/unoptimized trucks cover only 300 km/day vs optimized 375 km/day
-    const naiveDistance       = distanceKm * 1.20;   // 20% longer due to detours
-    const naivePlainKm        = naiveDistance * terrain.plainFraction;
-    const naiveHillyKm        = naiveDistance * terrain.hillyFraction;
-    const naivePureDrive      = (naivePlainKm / SPEED_PLAIN_KMH) + (naiveHillyKm / SPEED_HILLY_KMH);
-    const naiveShortBreaks    = Math.floor(naiveDistance / 200) * 0.5;
-    const naiveMealBreaks     = Math.floor(naiveDistance / 400) * 1.0;
-    const naiveOvernightRest  = Math.floor(naivePureDrive / 8) * 8;
-    const naiveCheckpoints    = Math.floor(naiveDistance / 500) * 1.5;
-    const naiveTotalHours     = naivePureDrive + naiveShortBreaks + naiveMealBreaks + naiveOvernightRest + naiveCheckpoints;
-    const naiveDuration       = naiveTotalHours * 3600;
-    const naiveFuelLiters     = (naivePlainKm / MILEAGE_PLAIN_KMPL) + (naiveHillyKm / MILEAGE_HILLY_KMPL);
-    const naiveFuelCost       = naiveFuelLiters * FUEL_PRICE;
-    const naiveCO2            = naiveFuelLiters * CO2_COEFFICIENT;
-
-    // ── Savings ───────────────────────────────────────────────────────────────
-    const savingsDistance = naiveDistance - distanceKm;
-    const savingsDuration = naiveDuration - durationSec;
-    const savingsFuel     = naiveFuelLiters - optFuelLiters;
-    const savingsCost     = naiveFuelCost - optFuelCost;
-    const savingsCO2      = naiveCO2 - optCO2;
+    // Savings
+    const savingsDistance = naiveDistance - optDistance;
+    const savingsDuration = naiveDuration - optDuration;
+    const savingsFuel = naiveFuel - optFuel;
+    const savingsCost = naiveCost - optCost;
+    const savingsCO2 = naiveCO2 - optCO2;
 
     res.json({
       success: true,
       pickup: { name: pickup, coords: pickupCoords },
-      drop:   { name: drop,   coords: dropCoords   },
+      drop: { name: drop, coords: dropCoords },
       optimized: {
-        distance_km:  distanceKm,
-        duration_sec: durationSec,
-        fuel_liters:  optFuelLiters,
-        fuel_cost:    optFuelCost,
-        co2_kg:       optCO2,
-        geometry:     route.geometry,
-        breakdown
+        distance_km: optDistance,
+        duration_sec: optDuration,
+        fuel_liters: optFuel,
+        fuel_cost: optCost,
+        co2_kg: optCO2,
+        geometry: route.geometry
       },
       naive: {
-        distance_km:  naiveDistance,
+        distance_km: naiveDistance,
         duration_sec: naiveDuration,
-        fuel_liters:  naiveFuelLiters,
-        fuel_cost:    naiveFuelCost,
-        co2_kg:       naiveCO2
+        fuel_liters: naiveFuel,
+        fuel_cost: naiveCost,
+        co2_kg: naiveCO2
       },
       savings: {
-        distance_km:  savingsDistance,
+        distance_km: savingsDistance,
         duration_sec: savingsDuration,
-        fuel_liters:  savingsFuel,
-        fuel_cost:    savingsCost,
-        co2_kg:       savingsCO2
+        fuel_liters: savingsFuel,
+        fuel_cost: savingsCost,
+        co2_kg: savingsCO2
       }
     });
 
