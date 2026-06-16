@@ -107,6 +107,9 @@ app.post("/api/ai/chat", async (req, res) => {
         console.warn("Fallback role parsing warning:", parseErr.message);
       }
 
+      const query = userQuestion.toLowerCase();
+      let responseText = "";
+
       // Heuristic Intent Classifiers
       const isWarehouse = query.includes("warehouse") || query.includes("virus") || query.includes("vairus") || query.includes("storage") || query.includes("depot") || query.includes("hub");
       const isOrder = query.includes("order") || query.includes("oder") || query.includes("load") || query.includes("purchase") || query.includes("delivery");
