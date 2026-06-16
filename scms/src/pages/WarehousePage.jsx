@@ -53,10 +53,11 @@ const WarehousePage = () => {
     const fetchPredictions = async () => {
         setLoadingPredictions(true);
         try {
-            const res = await axios.get('http://localhost:5001/api/predict/all');
+            const ML_API = process.env.REACT_APP_ML_API_URL || "http://localhost:5001";
+            const res = await axios.get(`${ML_API}/api/predict/all`);
             if (res.data && res.data.predictions) {
-             setPredictions(res.data.predictions);
-             setMlApiOnline(true);
+                setPredictions(res.data.predictions);
+                setMlApiOnline(true);
                 if (res.data.predictions.length > 0 && !selectedWhForChart) {
                     const firstId = res.data.predictions[0].warehouse_id;
                     setSelectedWhForChart(firstId);
@@ -68,25 +69,25 @@ const WarehousePage = () => {
         } catch (err) {
             console.warn("Prediction API offline. Falling back to local calculations.");
             setMlApiOnline(false);
-            
+
             // Fallback simulated predictions based on active warehouses data
             const fallbackPreds = warehouses.map(w => {
                 const capacity = w.max_capacity || 1;
                 const totalLoad = w.current_load + w.reserved_space;
                 const fillPercent = totalLoad / capacity;
-                
+
                 const nameHash = w.name.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
                 const simulatedVelocity = (nameHash % 20) - 8; // -8 to +11 tons/hour
-                
+
                 let risk = 0;
                 if (fillPercent > 0.85) risk = 85 + (nameHash % 15);
                 else if (fillPercent > 0.65) risk = 40 + (nameHash % 25);
                 else risk = nameHash % 15;
-                
-                const expectedTime = risk > 50 
+
+                const expectedTime = risk > 50
                     ? new Date(Date.now() + (24 - (risk % 16)) * 3600000).toISOString()
                     : null;
-                
+
                 let action = "SAFE: Operating levels are normal. No actions required.";
                 if (risk > 75) {
                     const alternateWh = warehouses.find(alt => alt.id !== w.id && (alt.current_load / alt.max_capacity) < 0.6);
@@ -124,7 +125,8 @@ const WarehousePage = () => {
     const fetchHistory = async (whId) => {
         setLoadingHistory(true);
         try {
-            const res = await axios.get(`http://localhost:5001/api/history/${whId}`);
+            const ML_API = process.env.REACT_APP_ML_API_URL || "http://localhost:5001";
+            const res = await axios.get(`${ML_API}/api/history/${whId}`);
             if (res.data && res.data.success) {
                 setWhHistoryData(res.data.history);
             } else {
@@ -136,7 +138,7 @@ const WarehousePage = () => {
             const now = Date.now();
             const w = warehouses.find(wh => wh.id === whId) || { max_capacity: 1000, current_load: 500 };
             const load = w.current_load;
-            
+
             for (let i = 24; i >= 0; i--) {
                 const recorded_at = new Date(now - i * 3600000).toISOString();
                 const cycle = Math.sin((i - 6) / 24 * 2 * Math.PI) * (w.max_capacity * 0.05);
@@ -454,9 +456,9 @@ const WarehousePage = () => {
                             fontWeight: '600'
                         }}>
                             <AlertTriangle size={20} />
-                            <span>ML Engine Server (Port 5001) is offline. Displaying real-time simulated forecasts. Start python api.py to connect live pipeline.</span>
-                            <button 
-                                onClick={fetchPredictions} 
+                            <span>Live ML Prediction Engine is currently offline. Displaying real-time simulated forecasts.</span>
+                            <button
+                                onClick={fetchPredictions}
                                 style={{
                                     marginLeft: 'auto',
                                     border: '1px solid #d97706',
@@ -515,7 +517,7 @@ const WarehousePage = () => {
                         }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                                 <h3 style={{ margin: 0, fontSize: '1.1rem', color: 'var(--accent)', fontWeight: 'bold', textTransform: 'uppercase' }}>ML Overflow Forecasts</h3>
-                                <button 
+                                <button
                                     onClick={fetchPredictions}
                                     disabled={loadingPredictions}
                                     style={{
@@ -546,12 +548,12 @@ const WarehousePage = () => {
                                         const isSelected = selectedWhForChart === p.warehouse_id;
                                         const load = Number(p.current_load || 0);
                                         const fill = Math.round(Number(p.fill_ratio_pct || 0));
-                                        
+
                                         // Risk colors
                                         let riskColor = '#10b981'; // Green
                                         let riskBg = 'rgba(16, 185, 129, 0.1)';
                                         let pulseClass = '';
-                                        
+
                                         if (p.overflow_risk_percentage > 70) {
                                             riskColor = '#ef4444'; // Red
                                             riskBg = 'rgba(239, 68, 68, 0.1)';
@@ -616,7 +618,7 @@ const WarehousePage = () => {
                                                 {/* Risk tag */}
                                                 <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
                                                     <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', textTransform: 'uppercase', fontWeight: 'bold' }}>Overflow Risk</span>
-                                                    <span 
+                                                    <span
                                                         className={`risk-badge${pulseClass}`}
                                                         style={{
                                                             fontSize: '0.85rem',
@@ -752,8 +754,8 @@ const WarehousePage = () => {
                                                     }))} margin={{ top: 5, right: 5, left: -25, bottom: 0 }}>
                                                         <defs>
                                                             <linearGradient id="chartGradient" x1="0" y1="0" x2="0" y2="1">
-                                                                <stop offset="5%" stopColor="#f97316" stopOpacity={0.4}/>
-                                                                <stop offset="95%" stopColor="#f97316" stopOpacity={0}/>
+                                                                <stop offset="5%" stopColor="#f97316" stopOpacity={0.4} />
+                                                                <stop offset="95%" stopColor="#f97316" stopOpacity={0} />
                                                             </linearGradient>
                                                         </defs>
                                                         <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" opacity={0.3} />

@@ -1,12 +1,12 @@
 import { useState, useEffect, useCallback } from "react";
 
- 
+
 const API_BASE = process.env.REACT_APP_ML_API_URL || "http://localhost:5001";
- 
+
 // ─────────────────────────────────────────────────────────────────────────────
 // RISK COLOUR HELPERS
 // ─────────────────────────────────────────────────────────────────────────────
- 
+
 function riskColor(pct) {
   if (pct >= 85) return { bg: "#fee2e2", border: "#ef4444", text: "#991b1b", label: "CRITICAL" };
   if (pct >= 65) return { bg: "#ffedd5", border: "#f97316", text: "#9a3412", label: "HIGH" };
@@ -14,24 +14,24 @@ function riskColor(pct) {
   if (pct >= 20) return { bg: "#dcfce7", border: "#22c55e", text: "#14532d", label: "LOW" };
   return { bg: "#f0fdf4", border: "#86efac", text: "#166534", label: "SAFE" };
 }
- 
+
 function RiskGauge({ pct }) {
   const c = riskColor(pct);
   const angle = (pct / 100) * 180; // 0–180° arc
- 
+
   // SVG arc path helper
   function polarToXY(angleDeg, r) {
     const rad = ((angleDeg - 180) * Math.PI) / 180;
     return { x: 60 + r * Math.cos(rad), y: 60 + r * Math.sin(rad) };
   }
- 
+
   function arc(startDeg, endDeg, r) {
     const s = polarToXY(startDeg, r);
     const e = polarToXY(endDeg, r);
     const large = endDeg - startDeg > 180 ? 1 : 0;
     return `M ${s.x} ${s.y} A ${r} ${r} 0 ${large} 1 ${e.x} ${e.y}`;
   }
- 
+
   return (
     <svg viewBox="0 0 120 70" width="120" height="70" aria-label={`Risk: ${pct}%`}>
       {/* Background track */}
@@ -53,11 +53,11 @@ function RiskGauge({ pct }) {
     </svg>
   );
 }
- 
+
 // ─────────────────────────────────────────────────────────────────────────────
 // SINGLE WAREHOUSE CARD
 // ─────────────────────────────────────────────────────────────────────────────
- 
+
 function PredictionCard({ prediction }) {
   const {
     warehouse_name,
@@ -71,10 +71,10 @@ function PredictionCard({ prediction }) {
     fill_ratio_pct,
     weather,
   } = prediction;
- 
+
   const c = riskColor(risk ?? 0);
   const fillBarWidth = Math.min(fill_ratio_pct ?? 0, 100);
- 
+
   function formatTime(iso) {
     if (!iso) return null;
     const d = new Date(iso);
@@ -84,7 +84,7 @@ function PredictionCard({ prediction }) {
     const days = Math.floor(hours / 24);
     return `~${days}d from now`;
   }
- 
+
   return (
     <div
       style={{
@@ -118,7 +118,7 @@ function PredictionCard({ prediction }) {
         </div>
         <RiskGauge pct={risk ?? 0} />
       </div>
- 
+
       {/* Capacity bar */}
       <div style={{ marginBottom: "12px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px", color: "#6b7280", marginBottom: "4px" }}>
@@ -142,7 +142,7 @@ function PredictionCard({ prediction }) {
           <span>Max: {capacity?.toLocaleString()}</span>
         </div>
       </div>
- 
+
       {/* Stats row */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", marginBottom: "12px" }}>
         <StatChip
@@ -156,7 +156,7 @@ function PredictionCard({ prediction }) {
           warn={!!expected_overflow_time}
         />
       </div>
- 
+
       {/* Weather */}
       {weather && (
         <div
@@ -180,7 +180,7 @@ function PredictionCard({ prediction }) {
           </span>
         </div>
       )}
- 
+
       {/* Recommended action */}
       <div
         style={{
@@ -197,7 +197,7 @@ function PredictionCard({ prediction }) {
     </div>
   );
 }
- 
+
 function StatChip({ label, value, warn }) {
   return (
     <div
@@ -217,29 +217,29 @@ function StatChip({ label, value, warn }) {
     </div>
   );
 }
- 
+
 // ─────────────────────────────────────────────────────────────────────────────
 // MAIN WIDGET
 // ─────────────────────────────────────────────────────────────────────────────
- 
+
 export default function OverflowPredictionWidget({ warehouseId }) {
   const [predictions, setPredictions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
- 
+
   const fetchPredictions = useCallback(async (fresh = false) => {
     try {
       setRefreshing(true);
       const url = warehouseId
         ? `${API_BASE}/api/predict/${warehouseId}${fresh ? "?fresh=true" : ""}`
         : `${API_BASE}/api/predict/all${fresh ? "?fresh=true" : ""}`;
- 
+
       const resp = await fetch(url);
       if (!resp.ok) throw new Error(`API error ${resp.status}`);
       const data = await resp.json();
- 
+
       if (warehouseId) {
         // Single warehouse — wrap in array
         const pred = data.prediction;
@@ -256,16 +256,16 @@ export default function OverflowPredictionWidget({ warehouseId }) {
       setRefreshing(false);
     }
   }, [warehouseId]);
- 
+
   useEffect(() => {
     fetchPredictions();
     // Auto-refresh every 5 minutes
     const interval = setInterval(() => fetchPredictions(), 5 * 60 * 1000);
     return () => clearInterval(interval);
   }, [fetchPredictions]);
- 
+
   const criticalCount = predictions.filter(p => (p.overflow_risk_percentage ?? 0) >= 65).length;
- 
+
   return (
     <div style={{ fontFamily: "'DM Sans', sans-serif" }}>
       {/* Widget header */}
@@ -312,14 +312,14 @@ export default function OverflowPredictionWidget({ warehouseId }) {
           </button>
         </div>
       </div>
- 
+
       {/* Body */}
       {loading && (
         <div style={{ textAlign: "center", padding: "40px", color: "#9ca3af" }}>
           Loading predictions…
         </div>
       )}
- 
+
       {error && (
         <div
           style={{
@@ -336,17 +336,17 @@ export default function OverflowPredictionWidget({ warehouseId }) {
           {error}
           <br />
           <span style={{ color: "#9ca3af", fontSize: "12px" }}>
-            Make sure <code>python api.py</code> is running on port 5001.
+            Live ML Engine unreachable.
           </span>
         </div>
       )}
- 
+
       {!loading && !error && predictions.length === 0 && (
         <div style={{ textAlign: "center", padding: "40px", color: "#9ca3af" }}>
           No predictions available yet. Run a warehouse snapshot first.
         </div>
       )}
- 
+
       {/* Cards grid */}
       <div
         style={{
