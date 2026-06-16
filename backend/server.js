@@ -120,6 +120,7 @@ app.post("/api/ai/chat", async (req, res) => {
       // 1. Warehouse Queries
       if (isWarehouse) {
         let warehouses = contextData.warehouses || [];
+        const isCountQuery = query.includes("how many") || query.includes("count") || query.includes("number");
 
         // Check if asking about capacity, fill rate, percentage, overflow, or above 85%
         if (query.includes("percent") || query.includes("%") || query.includes("fill") || query.includes("capacity") || query.includes("overflow") || query.includes("above") || query.includes("exceed")) {
@@ -139,16 +140,20 @@ app.post("/api/ai/chat", async (req, res) => {
             return (load / cap) * 100 > pctThreshold;
           });
 
-          if (overflowing.length === 0) {
-            responseText = `Based on the database context, there are **0** warehouses filled above ${pctThreshold}% capacity.`;
+          if (isCountQuery) {
+            responseText = `Based on the database context, there are **${overflowing.length}** warehouses filled above ${pctThreshold}% capacity.`;
           } else {
-            responseText = `There are **${overflowing.length}** warehouses filled above ${pctThreshold}% capacity:\n`;
-            overflowing.forEach((w, idx) => {
-              const cap = w.max_capacity || 1;
-              const load = w.current_load + (w.reserved_space || 0);
-              const fillPct = Math.round((load / cap) * 100);
-              responseText += `\n${idx + 1}. **${w.name}**: ${fillPct}% filled (${load}/${w.max_capacity} units)`;
-            });
+            if (overflowing.length === 0) {
+              responseText = `Based on the database context, there are **0** warehouses filled above ${pctThreshold}% capacity.`;
+            } else {
+              responseText = `There are **${overflowing.length}** warehouses filled above ${pctThreshold}% capacity:\n`;
+              overflowing.forEach((w, idx) => {
+                const cap = w.max_capacity || 1;
+                const load = w.current_load + (w.reserved_space || 0);
+                const fillPct = Math.round((load / cap) * 100);
+                responseText += `\n${idx + 1}. **${w.name}**: ${fillPct}% filled (${load}/${w.max_capacity} units)`;
+              });
+            }
           }
         } else {
           // Dynamic filtering by city / location
@@ -169,21 +174,27 @@ app.post("/api/ai/chat", async (req, res) => {
             );
           }
 
-          if (warehouses.length === 0) {
-            responseText = filterCity 
-              ? `I couldn't find any warehouses in ${filterCity.toUpperCase()} registered under your profile.`
-              : "I couldn't find any warehouses registered under your profile.";
-          } else {
+          if (isCountQuery) {
             responseText = filterCity
-              ? `Here are your destination warehouses in ${filterCity.toUpperCase()}:\n`
-              : `Here are your destination warehouses:\n`;
-            warehouses.forEach((w, idx) => {
-              responseText += `\n${idx + 1}. **${w.name}**\n`;
-              responseText += `   - **Address**: ${w.address || ''}, ${w.city || ''}\n`;
-              if (w.contact_name) {
-                responseText += `   - **Contact**: ${w.contact_name} (${w.contact_phone || ''})\n`;
-              }
-            });
+              ? `There are **${warehouses.length}** warehouses in ${filterCity.toUpperCase()} in the database.`
+              : `There are **${warehouses.length}** warehouses total in the database.`;
+          } else {
+            if (warehouses.length === 0) {
+              responseText = filterCity 
+                ? `I couldn't find any warehouses in ${filterCity.toUpperCase()} registered under your profile.`
+                : "I couldn't find any warehouses registered under your profile.";
+            } else {
+              responseText = filterCity
+                ? `Here are your destination warehouses in ${filterCity.toUpperCase()}:\n`
+                : `Here are your destination warehouses:\n`;
+              warehouses.forEach((w, idx) => {
+                responseText += `\n${idx + 1}. **${w.name}**\n`;
+                responseText += `   - **Address**: ${w.address || ''}, ${w.city || ''}\n`;
+                if (w.contact_name) {
+                  responseText += `   - **Contact**: ${w.contact_name} (${w.contact_phone || ''})\n`;
+                }
+              });
+            }
           }
         }
       }
@@ -212,10 +223,24 @@ app.post("/api/ai/chat", async (req, res) => {
         let orders = contextData.orders || contextData.recentOrders || [];
         
         if (query.includes("how many") || query.includes("count") || query.includes("number")) {
-          const pending = orders.filter(o => (o.status || '').toLowerCase() === 'pending').length;
-          const confirmed = orders.filter(o => (o.status || '').toLowerCase() === 'confirmed').length;
-          const delivered = orders.filter(o => (o.status || '').toLowerCase() === 'delivered').length;
-          responseText = `There are **${orders.length}** total orders: **${confirmed}** confirmed, **${pending}** pending, and **${delivered}** delivered.`;
+          if (query.includes("pending")) {
+            const pending = orders.filter(o => (o.status || '').toLowerCase() === 'pending').length;
+            responseText = `There are **${pending}** pending orders.`;
+          } else if (query.includes("confirm")) {
+            const confirmed = orders.filter(o => (o.status || '').toLowerCase() === 'confirmed').length;
+            responseText = `There are **${confirmed}** confirmed orders.`;
+          } else if (query.includes("deliver")) {
+            const delivered = orders.filter(o => (o.status || '').toLowerCase() === 'delivered').length;
+            responseText = `There are **${delivered}** delivered orders.`;
+          } else if (query.includes("assign")) {
+            const assigned = orders.filter(o => o.driver_id || o.fleet_id).length;
+            responseText = `There are **${assigned}** orders currently assigned to a driver or truck.`;
+          } else {
+            const pending = orders.filter(o => (o.status || '').toLowerCase() === 'pending').length;
+            const confirmed = orders.filter(o => (o.status || '').toLowerCase() === 'confirmed').length;
+            const delivered = orders.filter(o => (o.status || '').toLowerCase() === 'delivered').length;
+            responseText = `There are **${orders.length}** total orders: **${confirmed}** confirmed, **${pending}** pending, and **${delivered}** delivered.`;
+          }
         } else {
           // Check for status filters
           if (query.includes("pending")) {
