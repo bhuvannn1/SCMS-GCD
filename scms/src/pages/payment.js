@@ -95,7 +95,7 @@ const Payment = () => {
       });
 
       const options = {
-        key: data.key_id || process.env.REACT_APP_RAZORPAY_KEY_ID,
+        key: data.key_id || process.env.REACT_APP_RAZORPAY_KEY_ID || "rzp_test_Si7muEw1pbvVFT",
         amount: data.amount,
         currency: data.currency || "INR",
         name: "IGNIS SCMS",

@@ -48,8 +48,8 @@ app.use('/api/vision', visionRoutes);
 
 // ── Razorpay instance ────────────────────────────────────────────────────────
 const razorpay = new Razorpay({
-  key_id: process.env.RAZORPAY_KEY_ID,
-  key_secret: process.env.RAZORPAY_KEY_SECRET,
+  key_id: process.env.RAZORPAY_KEY_ID || "rzp_test_Si7muEw1pbvVFT",
+  key_secret: process.env.RAZORPAY_KEY_SECRET || "VtiQpG0aOPvMy6zUSEnUz9D6",
 });
 
 // ── Helper: generate invoice number ─────────────────────────────────────────
