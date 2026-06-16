@@ -258,4 +258,4 @@ if __name__ == "__main__":
     snapshot_thread = threading.Thread(target=_auto_snapshot_loop, daemon=True)
     snapshot_thread.start()
     print("IGNIS Prediction API starting on http://localhost:5001")
-    app.run(host="0.0.0.0", port=5001, debug=False)
+    app.run(host="0.0.0.0", port=5000, debug=False)
