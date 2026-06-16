@@ -26,7 +26,10 @@ const allowedOrigins = [
 const corsOptions = {
   origin: function (origin, callback) {
     if (!origin) return callback(null, true);
-    const isAllowed = allowedOrigins.includes(origin) || origin.endsWith(".vercel.app");
+    const isAllowed = allowedOrigins.includes(origin) || 
+                      origin.endsWith(".vercel.app") || 
+                      origin.endsWith(".web.app") || 
+                      origin.endsWith(".firebaseapp.com");
     if (isAllowed) {
       callback(null, true);
     } else {
