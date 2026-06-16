@@ -82,6 +82,9 @@ app.post("/api/ai/chat", async (req, res) => {
         }
       } catch (parseErr) {
         console.warn("Fallback context parsing warning:", parseErr.message);
+        if (contextMatch) {
+          console.warn("Failed content was:", contextMatch[1].trim());
+        }
       }
 
       // 2. Extract user question
@@ -161,11 +164,34 @@ app.post("/api/ai/chat", async (req, res) => {
       }
       // 4. Check for warehouses
       else if (query.includes("warehouse")) {
-        const warehouses = contextData.warehouses || [];
+        let warehouses = contextData.warehouses || [];
+        
+        // Dynamic filtering by city / location
+        const cities = ["bangalore", "bengaluru", "mumbai", "delhi", "chennai", "kolkata", "pune", "ahmedabad", "jaipur", "lucknow", "surat", "nagpur", "bhopal", "patna", "chandigarh", "kochi", "indore", "coimbatore", "visakhapatnam", "vadodara", "rajkot", "guwahati", "thiruvananthapuram", "raipur", "amritsar", "jodhpur", "mangaluru", "varanasi", "bhubaneswar", "nashik", "noida", "gurgaon"];
+        let filterCity = null;
+        for (const city of cities) {
+          if (query.includes(city)) {
+            filterCity = city;
+            break;
+          }
+        }
+
+        if (filterCity) {
+          warehouses = warehouses.filter(w => 
+            (w.city && w.city.toLowerCase().includes(filterCity)) || 
+            (w.name && w.name.toLowerCase().includes(filterCity)) ||
+            (w.address && w.address.toLowerCase().includes(filterCity))
+          );
+        }
+
         if (warehouses.length === 0) {
-          responseText = "I couldn't find any warehouses registered under your profile.";
+          responseText = filterCity 
+            ? `I couldn't find any warehouses in ${filterCity.toUpperCase()} registered under your profile.`
+            : "I couldn't find any warehouses registered under your profile.";
         } else {
-          responseText = `Here are your destination warehouses:\n`;
+          responseText = filterCity
+            ? `Here are your destination warehouses in ${filterCity.toUpperCase()}:\n`
+            : `Here are your destination warehouses:\n`;
           warehouses.forEach((w, idx) => {
             responseText += `\n${idx + 1}. **${w.name}**\n`;
             responseText += `   - **Address**: ${w.address || ''}, ${w.city || ''}\n`;
