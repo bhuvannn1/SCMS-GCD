@@ -74,21 +74,34 @@ app.post("/api/ai/chat", async (req, res) => {
       let userQuestion = prompt;
       let userRole = "buyer";
 
+      // 1. Extract context data
       try {
-        const contextMatch = prompt.match(/Context data \(scoped specifically to this user\):\s*(\{.*?\})/);
+        const contextMatch = prompt.match(/Context data \(scoped specifically to this user\):\s*([\s\S]*?)\s*(?:App usage guidebook:|App guidebook:|User question:|$)/i);
         if (contextMatch) {
-          contextData = JSON.parse(contextMatch[1]);
+          contextData = JSON.parse(contextMatch[1].trim());
         }
+      } catch (parseErr) {
+        console.warn("Fallback context parsing warning:", parseErr.message);
+      }
+
+      // 2. Extract user question
+      try {
         const questionMatch = prompt.match(/User question:\s*([\s\S]*?)\s*(?:Rules:|$)/i);
         if (questionMatch) {
           userQuestion = questionMatch[1].trim();
         }
+      } catch (parseErr) {
+        console.warn("Fallback question parsing warning:", parseErr.message);
+      }
+
+      // 3. Extract user role
+      try {
         const roleMatch = prompt.match(/The user's role is:\s*(.*)/i);
         if (roleMatch) {
           userRole = roleMatch[1].trim();
         }
       } catch (parseErr) {
-        console.warn("Fallback parser warning:", parseErr.message);
+        console.warn("Fallback role parsing warning:", parseErr.message);
       }
 
       const query = userQuestion.toLowerCase();
