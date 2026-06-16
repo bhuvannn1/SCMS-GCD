@@ -1,7 +1,8 @@
 import { useEffect, useState, useRef } from "react"
-import { Search, ArrowUpDown, Filter, Star } from 'lucide-react';
+import { Search, ArrowUpDown, Filter, Star, Truck, SearchX, AlertTriangle } from 'lucide-react';
 import supabase from "../config/SupabaseClient"
 import useClickOutside from "../hooks/useClickOutside"
+import EmptyState, { getFriendlyError } from "../components/EmptyState";
 
 const Dispatch = () => {
   const [fetchError, setFetchError] = useState(null)
@@ -285,14 +286,34 @@ const Dispatch = () => {
         </div>
       </div>
 
-      {fetchError && <p className="error">{fetchError}</p>}
+      {fetchError && (
+        <EmptyState
+          icon={AlertTriangle}
+          variant="warning"
+          title="Data Temporarily Unavailable"
+          message={getFriendlyError(fetchError)}
+          style={{ margin: '20px 0' }}
+        />
+      )}
 
       {dispatchData && dispatchData.length === 0 && (
-        <p>No dispatch data available</p>
+        <EmptyState
+          icon={Truck}
+          title="No Shipments in Motion"
+          message="Active shipments and dispatches will appear here."
+          style={{ margin: '20px 0', minHeight: '240px' }}
+        />
       )}
 
       {sortedDispatch && sortedDispatch.length === 0 && dispatchData && dispatchData.length > 0 && (
-        <p style={{ color: 'var(--text-secondary)', textAlign: 'center', marginTop: '20px' }}>No dispatches match the search criteria.</p>
+        <EmptyState
+          icon={SearchX}
+          title="No Matches Found"
+          message="No dispatches match your current search or filter criteria. Try adjusting your filters."
+          variant="muted"
+          size="sm"
+          style={{ margin: '20px 0' }}
+        />
       )}
 
       {sortedDispatch && sortedDispatch.length > 0 && (

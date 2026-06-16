@@ -47,19 +47,29 @@ const GoogleTranslate = () => {
     <div style={{ display: 'flex', alignItems: 'center' }}>
       {!showTranslate ? (
         <button 
+          className="translate-init-btn"
           onClick={loadTranslateScript} 
           style={{ 
-            backgroundColor: '#f8fafc', 
-            color: '#1e293b', 
+            backgroundColor: '#fff', 
+            color: '#f97316', 
             marginRight: '12px',
-            border: '1px solid #cbd5e1',
-            boxShadow: 'none',
+            border: '2px solid #f97316',
+            boxShadow: '0 4px 6px rgba(249,115,22,0.1)',
             padding: '8px 16px',
             borderRadius: '8px',
             fontWeight: '600',
             cursor: 'pointer',
             display: 'flex',
-            alignItems: 'center'
+            alignItems: 'center',
+            transition: 'all 0.2s ease-in-out'
+          }}
+          onMouseEnter={e => {
+            e.currentTarget.style.backgroundColor = '#f97316';
+            e.currentTarget.style.color = '#fff';
+          }}
+          onMouseLeave={e => {
+            e.currentTarget.style.backgroundColor = '#fff';
+            e.currentTarget.style.color = '#f97316';
           }}
         >
           <svg style={{ width: '16px', height: '16px', marginRight: '6px' }} fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
@@ -68,7 +78,7 @@ const GoogleTranslate = () => {
           Translate
         </button>
       ) : (
-        <div id="google_translate_element" style={{ marginRight: '12px', minWidth: '150px' }}></div>
+        <div id="google_translate_element" style={{ marginRight: '12px' }}></div>
       )}
     </div>
   );

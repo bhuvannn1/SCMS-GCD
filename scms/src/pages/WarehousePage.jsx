@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { AlertTriangle, Building2, TrendingUp, Search, Download, ArrowUpDown, X } from 'lucide-react';
+import { AlertTriangle, Building2, TrendingUp, Search, ArrowUpDown, X, SearchX } from 'lucide-react';
 import supabase from '../config/SupabaseClient';
+import EmptyState, { getFriendlyError } from '../components/EmptyState';
 import useWarehouseMonitor from '../hooks/useWarehouseMonitor';
 import WarehouseMap from '../components/WarehouseMap';
 import axios from 'axios';
@@ -257,30 +258,6 @@ const WarehousePage = () => {
                         Real-time Warehouse Capacity & Network Monitoring
                     </p>
                 </div>
-                <button 
-                    onClick={() => {
-                        alert("Exporting PDF capacity and network analytics report...");
-                    }}
-                    style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                        padding: '10px 20px',
-                        backgroundColor: 'var(--accent)',
-                        color: '#ffffff',
-                        border: 'none',
-                        borderRadius: '8px',
-                        cursor: 'pointer',
-                        fontWeight: 'bold',
-                        fontSize: '0.85rem',
-                        transition: 'all 0.2s',
-                        boxShadow: 'var(--shadow-md)'
-                    }}
-                    onMouseEnter={(e) => e.currentTarget.style.filter = 'brightness(1.1)'}
-                    onMouseLeave={(e) => e.currentTarget.style.filter = 'none'}
-                >
-                    <Download size={16} /> Export Report
-                </button>
             </div>
 
             {/* Top Stats Bar */}
@@ -491,9 +468,13 @@ const WarehousePage = () => {
                     {/* Warehouse Scrollable List */}
                     <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '10px' }}>
                         {sortedWarehouses.length === 0 ? (
-                            <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', fontStyle: 'italic', textAlign: 'center', padding: '20px' }}>
-                                No warehouses match
-                            </div>
+                            <EmptyState
+                                icon={SearchX}
+                                title="No Matching Warehouses"
+                                message="Adjust your search or filters to locate other warehouses."
+                                size="sm"
+                                style={{ padding: '20px 0' }}
+                            />
                         ) : (
                             sortedWarehouses.map((w) => {
                                 const capacity = w.max_capacity || 1;
@@ -641,7 +622,7 @@ const WarehousePage = () => {
                         )}
                         {errorMessage && (
                             <div style={{ padding: '12px 16px', backgroundColor: 'rgba(239, 68, 68, 0.15)', border: '1px solid #ef4444', borderRadius: '8px', color: '#ef4444', fontWeight: '600', fontSize: '0.9rem' }}>
-                                {errorMessage}
+                                {getFriendlyError(errorMessage)}
                             </div>
                         )}
 
@@ -760,9 +741,12 @@ const WarehousePage = () => {
                                 backgroundColor: 'var(--bg-card)'
                             }}>
                                 {alternatives.length === 0 ? (
-                                    <div style={{ padding: '20px', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-                                        No alternative warehouses found matching the options.
-                                    </div>
+                                    <EmptyState
+                                        icon={SearchX}
+                                        title="No Alternative Warehouses"
+                                        message="No warehouses match your current search or filter criteria. Try adjusting your filters."
+                                        size="sm"
+                                    />
                                 ) : (
                                     alternatives.map((wh) => {
                                         const currentFill = Math.round(wh.fillPercent * 100);

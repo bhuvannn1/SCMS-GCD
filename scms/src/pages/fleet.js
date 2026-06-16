@@ -1,7 +1,48 @@
 import { useEffect, useState, useRef } from "react"
-import { Search, ArrowUpDown, Filter } from 'lucide-react';
+import { Search, ArrowUpDown, Filter, Truck, SearchX, AlertTriangle, RefreshCw } from 'lucide-react';
+import EmptyState from '../components/EmptyState';
 import supabase from "../config/SupabaseClient"
 import useClickOutside from "../hooks/useClickOutside"
+
+const formatIndianPhoneNumber = (value) => {
+  if (!value) return '';
+  let digits = value.replace(/\D/g, '');
+  const cleanInput = value.trim();
+  if (cleanInput.startsWith('+91') || cleanInput.startsWith('91')) {
+    if (digits.startsWith('91')) {
+      digits = digits.slice(2);
+    }
+  }
+  const core = digits.slice(0, 10);
+  if (core.length > 0) {
+    return `+91 ${core}`;
+  }
+  return '';
+};
+
+// Format DL: SS RR YYYY NNNNNNN  e.g. "KA 04 2020 0123456"
+const formatDrivingLicense = (value) => {
+  if (!value) return '';
+  const upper = value.toUpperCase();
+  const chars = upper.replace(/[^A-Z0-9]/g, '');
+  let result = '';
+  const ss = chars.slice(0, 2).replace(/[^A-Z]/g, '');
+  result += ss;
+  if (chars.length > 2) {
+    const rrRaw = chars.slice(2).replace(/[^0-9]/g, '');
+    const rr = rrRaw.slice(0, 2);
+    result += ' ' + rr;
+    if (rrRaw.length > 2) {
+      const yyyy = rrRaw.slice(2, 6);
+      result += ' ' + yyyy;
+      if (rrRaw.length > 6) {
+        const nnn = rrRaw.slice(6, 13);
+        result += ' ' + nnn;
+      }
+    }
+  }
+  return result.trim();
+};
 
 const API = process.env.REACT_APP_API_URL || "http://localhost:5000";
 
@@ -493,14 +534,36 @@ const Fleet = () => {
           )}
         </div>
 
-      {fetchError && (<p className="error">{fetchError}</p>)}
+      {fetchError && (
+        <EmptyState
+          icon={RefreshCw}
+          title="Data Temporarily Unavailable"
+          message="We couldn't load fleet data right now. Please refresh to try again."
+          variant="warning"
+          size="md"
+          style={{ margin: '20px 0' }}
+        />
+      )}
 
       {fleetData && fleetData.length === 0 && (
-        <p>No vehicles found! Add some trucks or check RLS.</p>
+        <EmptyState
+          icon={Truck}
+          title="Fleet Standing By"
+          message="No vehicles have been added yet. Add your first truck to start managing your fleet."
+          size="lg"
+          style={{ margin: '20px 0', minHeight: '240px' }}
+        />
       )}
 
       {sortedFleet && sortedFleet.length === 0 && fleetData && fleetData.length > 0 && (
-        <p style={{ color: 'var(--text-secondary)', textAlign: 'center', marginTop: '20px' }}>No vehicles match the search criteria.</p>
+        <EmptyState
+          icon={SearchX}
+          title="No Matches Found"
+          message="No vehicles match your current search or filter criteria. Try adjusting your filters."
+          variant="muted"
+          size="md"
+          style={{ margin: '20px 0' }}
+        />
       )}
 
       {sortedFleet && sortedFleet.length > 0 && (
@@ -634,7 +697,7 @@ const Fleet = () => {
                       </div>
                       <div>
                         <span style={{ fontSize: '0.62rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Phone</span>
-                        <span style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-secondary, #64748b)' }}>{vehicle.profiles.phone || 'N/A'}</span>
+                        <span style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-secondary, #64748b)' }}>{formatIndianPhoneNumber(vehicle.profiles.phone) || 'N/A'}</span>
                       </div>
                     </div>
                   )}
@@ -649,7 +712,7 @@ const Fleet = () => {
                   <div>
                     <span style={{ fontSize: '0.62rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.5px' }}>License Plate</span>
                     <span style={{ fontSize: '0.85rem', fontWeight: 800, color: 'var(--text-primary, #1e293b)' }}>
-                      {vehicle.license_number || 'N/A'}
+                      {vehicle.license_number ? formatDrivingLicense(vehicle.license_number) : 'N/A'}
                     </span>
                   </div>
                 </div>
@@ -710,11 +773,12 @@ const Fleet = () => {
 
             {addError && (
               <div style={{
-                padding: '12px 16px', background: '#fee2e2', color: '#ef4444',
+                padding: '12px 16px', background: 'rgba(249,115,22,0.08)', color: '#ea580c',
                 borderRadius: '12px', fontSize: '0.85rem', fontWeight: 600,
-                marginBottom: '16px', border: '1px solid #fecaca'
+                marginBottom: '16px', border: '1px solid rgba(249,115,22,0.25)',
+                display: 'flex', alignItems: 'center', gap: '8px'
               }}>
-                ✗ {addError}
+                <AlertTriangle size={16} /> {String(addError).replace(/supabase|database|SQL|RLS|api|fetch/gi, 'system')}
               </div>
             )}
 
@@ -741,12 +805,12 @@ const Fleet = () => {
 
                   <div>
                     <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: 700, textTransform: 'uppercase', color: '#64748b', marginBottom: '4px' }}>Phone Number</label>
-                    <input type="text" required value={driverPhone} onChange={e => setDriverPhone(e.target.value)} style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none' }} placeholder="9876543210" />
+                    <input type="text" required value={driverPhone} onChange={e => setDriverPhone(formatIndianPhoneNumber(e.target.value))} style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none' }} placeholder="+91 9876543210" />
                   </div>
 
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: 700, textTransform: 'uppercase', color: '#64748b', marginBottom: '4px' }}>License Number</label>
-                    <input type="text" required value={driverLicense} onChange={e => setDriverLicense(e.target.value)} style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none' }} placeholder="KA0120200000000" />
+                    <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: 700, textTransform: 'uppercase', color: '#64748b', marginBottom: '4px' }}>License Number (DL)</label>
+                    <input type="text" required value={driverLicense} onChange={e => setDriverLicense(formatDrivingLicense(e.target.value))} style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none' }} placeholder="KA 04 2020 0123456" />
                   </div>
                 </div>
 

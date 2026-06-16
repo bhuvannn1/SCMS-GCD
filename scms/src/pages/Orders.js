@@ -1,7 +1,8 @@
 import { useEffect, useState, useRef } from "react"
-import { Search, ArrowUpDown, Filter, Lock, CheckCircle, Package, MapPin, Home, Truck, ChevronDown, ChevronUp } from 'lucide-react';
+import { Search, ArrowUpDown, Filter, Lock, CheckCircle, Package, MapPin, Home, Truck, ChevronDown, ChevronUp, SearchX, AlertTriangle } from 'lucide-react';
 import { useNavigate } from "react-router-dom"
 import supabase from "../config/SupabaseClient"
+import EmptyState, { getFriendlyError } from "../components/EmptyState";
 import useClickOutside from "../hooks/useClickOutside"
 import { MapContainer, TileLayer, Marker, Polyline } from "react-leaflet"
 import L from "leaflet"
@@ -96,7 +97,7 @@ const Orders = () => {
   const [fleetId, setFleetId] = useState('')
   const [assignedAmount, setAssignedAmount] = useState(0)
   const [buyerAmount, setBuyerAmount] = useState(0)
-  const [orderStatus, setOrderStatus] = useState('Pending')
+  const [orderStatus, setOrderStatus] = useState('Not Confirmed')
   const [paymentStatus, setPaymentStatus] = useState('unpaid')
   const [addLoading, setAddLoading] = useState(false)
   const [addError, setAddError] = useState(null)
@@ -157,12 +158,6 @@ const Orders = () => {
         throw new Error(data.error || "Failed to calculate route");
       }
       setRoutingData(data);
-      // Auto-set ETA if empty or default
-      if (data.optimized?.duration_sec) {
-        const hours = Math.round(data.optimized.duration_sec / 3600);
-        setEta(`${hours} Hours`);
-      }
-      // Auto-suggest price if 0 or empty
       if (data.optimized?.distance_km && (!assignedAmount || Number(assignedAmount) === 0)) {
         // Base rate ₹35/km plus base charge of ₹2000
         const suggestedPrice = Math.round(data.optimized.distance_km * 35 + 2000);
@@ -190,12 +185,6 @@ const Orders = () => {
         throw new Error(data.error || "Failed to calculate route");
       }
       setEditRoutingData(data);
-      // Auto-set ETA if empty or default
-      if (data.optimized?.duration_sec) {
-        const hours = Math.round(data.optimized.duration_sec / 3600);
-        setEditEta(`${hours} Hours`);
-      }
-      // Auto-suggest price if 0 or empty
       if (data.optimized?.distance_km && (!editAssignedAmount || Number(editAssignedAmount) === 0)) {
         // Base rate ₹35/km plus base charge of ₹2000
         const suggestedPrice = Math.round(data.optimized.distance_km * 35 + 2000);
@@ -819,12 +808,48 @@ const Orders = () => {
           )}
         </div>
 
-      {fetchError && (<p className="error">{fetchError}</p>)}
+      {fetchError && (
+        <EmptyState
+          icon={AlertTriangle}
+          variant="warning"
+          title="Data Temporarily Unavailable"
+          message={getFriendlyError(fetchError)}
+          style={{ margin: '20px 0' }}
+        />
+      )}
       {loadData && loadData.length === 0 && (
-        <p>No data found! The "Load" table is either empty or Row Level Security (RLS) is blocking read access.</p>
+        userRole === 'driver' ? (
+          <EmptyState
+            icon={Package}
+            title="Nothing to Deliver Yet"
+            message="Orders haven't been assigned. Explore the app while we prepare your next route."
+            style={{ margin: '20px 0', minHeight: '240px' }}
+          />
+        ) : userRole === 'buyer' ? (
+          <EmptyState
+            icon={Package}
+            title="No Purchases Yet"
+            message="Your order history will be displayed here once you buy products."
+            style={{ margin: '20px 0', minHeight: '240px' }}
+          />
+        ) : (
+          <EmptyState
+            icon={Package}
+            title="Waiting for Customers"
+            message="Customer orders will appear here as they arrive."
+            style={{ margin: '20px 0', minHeight: '240px' }}
+          />
+        )
       )}
       {sortedCards && sortedCards.length === 0 && loadData && loadData.length > 0 && (
-        <p style={{ color: 'var(--text-secondary)', textAlign: 'center', marginTop: '20px' }}>No orders match the search criteria.</p>
+        <EmptyState
+          icon={SearchX}
+          title="No Matches Found"
+          message="No orders match your current search or filter criteria. Try adjusting your filters."
+          variant="muted"
+          size="sm"
+          style={{ margin: '20px 0' }}
+        />
       )}
       {sortedCards && sortedCards.length > 0 && (
         <div className="loads">
@@ -841,7 +866,9 @@ const Orders = () => {
             const lowerStatus = (load.status || '').toLowerCase();
             const isUnpaid = load.payment_status !== 'paid';
 
-            if (isUnpaid && (lowerStatus === 'pending' || lowerStatus === 'confirmed')) {
+            if (isUnpaid && (lowerStatus === 'pending' || lowerStatus === 'not confirmed' || lowerStatus === 'confirmed' || lowerStatus === 'damaged')) {
+              statusConfig = { bg: '#fee2e2', text: '#ef4444', label: 'Not Confirmed', dot: '#ef4444' };
+            } else if (lowerStatus === 'not confirmed' || lowerStatus === 'damaged') {
               statusConfig = { bg: '#fee2e2', text: '#ef4444', label: 'Not Confirmed', dot: '#ef4444' };
             } else if (lowerStatus === 'running' || lowerStatus === 'assigned' || lowerStatus === 'in transit') {
               statusConfig = { bg: '#f97316', text: '#ffffff', label: 'In Transit', dot: '#ffffff' };
@@ -851,13 +878,18 @@ const Orders = () => {
               statusConfig = { bg: '#dbeafe', text: '#2563eb', label: 'Confirmed', dot: '#2563eb' };
             } else if (lowerStatus === 'stopped') {
               statusConfig = { bg: '#fee2e2', text: '#ef4444', label: 'Stopped', dot: '#ef4444' };
+            } else {
+              // Fallback for any unknown DB status — respect payment state
+              statusConfig = isUnpaid
+                ? { bg: '#fee2e2', text: '#ef4444', label: 'Not Confirmed', dot: '#ef4444' }
+                : { bg: '#dcfce7', text: '#16a34a', label: 'Confirmed', dot: '#16a34a' };
             }
             
             // Generate contextual AI insights
             let aiInsight = "Route monitored by active systems.";
-            if (isUnpaid && (lowerStatus === 'pending' || lowerStatus === 'confirmed')) {
+            if (isUnpaid && (lowerStatus === 'pending' || lowerStatus === 'not confirmed' || lowerStatus === 'confirmed')) {
               aiInsight = `Awaiting payment confirmation from the buyer to schedule route dispatch.`;
-            } else if (lowerStatus === 'pending') {
+            } else if (lowerStatus === 'pending' || lowerStatus === 'not confirmed') {
               aiInsight = `Order registered. Awaiting fleet allocation and driver assignment for route.`;
             } else if (lowerStatus === 'assigned') {
               aiInsight = `Driver and vehicle assigned. Initial safety check complete. Ready for dispatch to ${dropCity || 'destination'}.`;
@@ -955,7 +987,7 @@ const Orders = () => {
                       width: '38px',
                       height: '38px',
                       borderRadius: '10px',
-                      background: 'var(--bg-dark-only)',
+                      background: '#1e293b',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
@@ -1015,26 +1047,11 @@ const Orders = () => {
                     <span style={{ fontSize: '0.62rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', display: 'block', letterSpacing: '0.5px' }}>
                       {userRole === 'driver' ? 'EARNING' : 'VALUE'}
                     </span>
-                    <span style={{ fontSize: '0.9rem', fontWeight: 800, color: 'var(--text-primary, #1e293b)', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                    <span style={{ fontSize: '0.9rem', fontWeight: 800, color: 'var(--text-primary, #1e293b)' }}>
                       {userRole === 'driver' 
                         ? (load.assigned_amount ? `₹${Number(load.assigned_amount).toLocaleString("en-IN")}` : 'Not Set')
                         : (load.buyer_amount ? `₹${Number(load.buyer_amount).toLocaleString("en-IN")}` : 'Not Set')
                       }
-                      
-                      {userRole !== 'driver' && (
-                        /* Payment Status indicator pill inline */
-                        <span style={{
-                          fontSize: '0.62rem',
-                          fontWeight: 800,
-                          color: load.payment_status === 'paid' ? '#10b981' : '#3b82f6',
-                          background: load.payment_status === 'paid' ? '#e6fbf3' : '#eff6ff',
-                          padding: '2px 6px',
-                          borderRadius: '6px',
-                          textTransform: 'uppercase'
-                        }}>
-                          {load.payment_status === 'paid' ? 'PAID' : 'UNPAID'}
-                        </span>
-                      )}
                     </span>
                   </div>
                 </div>
@@ -1155,6 +1172,10 @@ const Orders = () => {
                           <span style={{ fontSize: '0.82rem', color: 'var(--text-primary)', fontWeight: 600 }}>{load.assigned_driver || 'None'}</span>
                         </div>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                          <span style={{ fontSize: '0.65rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase' }}>DRIVER PHONE</span>
+                          <span style={{ fontSize: '0.82rem', color: 'var(--text-primary)', fontWeight: 600 }}>{load.driver?.phone || 'N/A'}</span>
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
                           <span style={{ fontSize: '0.65rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase' }}>VEHICLE NUMBER</span>
                           <span style={{ fontSize: '0.82rem', color: 'var(--text-primary)', fontWeight: 600 }}>{load.vehicleId || 'None'}</span>
                         </div>
@@ -1251,43 +1272,45 @@ const Orders = () => {
                     {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                   </button>
 
-                  {/* Track Live button */}
-                  {lowerStatus === 'running' || lowerStatus === 'in transit' ? (
-                    <button
-                      onClick={() => navigate(`/map?loadId=${load.load_id}`)}
-                      style={{
-                        background: '#2563eb',
-                        color: 'white',
-                        border: 'none',
-                        padding: '8px 16px',
-                        borderRadius: '20px',
-                        fontWeight: 700,
-                        fontSize: '0.82rem',
-                        cursor: 'pointer',
-                        boxShadow: '0 4px 10px rgba(37,99,235,0.2)',
-                        transition: 'all 0.2s'
-                      }}
-                      onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = '0 6px 14px rgba(37,99,235,0.3)'; }}
-                      onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = '0 4px 10px rgba(37,99,235,0.2)'; }}
-                    >
-                      Track Live
-                    </button>
-                  ) : (
-                    <button
-                      disabled
-                      style={{
-                        background: '#f1f5f9',
-                        color: '#94a3b8',
-                        border: 'none',
-                        padding: '8px 16px',
-                        borderRadius: '20px',
-                        fontWeight: 700,
-                        fontSize: '0.82rem',
-                        cursor: 'not-allowed'
-                      }}
-                    >
-                      Track Live
-                    </button>
+                  {/* Track Live / View Map button — only for non-drivers */}
+                  {userRole !== 'driver' && (
+                    lowerStatus === 'running' || lowerStatus === 'in transit' ? (
+                      <button
+                        onClick={() => navigate(`/map?loadId=${load.load_id}`)}
+                        style={{
+                          background: '#2563eb',
+                          color: 'white',
+                          border: 'none',
+                          padding: '8px 16px',
+                          borderRadius: '20px',
+                          fontWeight: 700,
+                          fontSize: '0.82rem',
+                          cursor: 'pointer',
+                          boxShadow: '0 4px 10px rgba(37,99,235,0.2)',
+                          transition: 'all 0.2s'
+                        }}
+                        onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = '0 6px 14px rgba(37,99,235,0.3)'; }}
+                        onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = '0 4px 10px rgba(37,99,235,0.2)'; }}
+                      >
+                        Track Live
+                      </button>
+                    ) : (
+                      <button
+                        disabled
+                        style={{
+                          background: '#f1f5f9',
+                          color: '#94a3b8',
+                          border: 'none',
+                          padding: '8px 16px',
+                          borderRadius: '20px',
+                          fontWeight: 700,
+                          fontSize: '0.82rem',
+                          cursor: 'not-allowed'
+                        }}
+                      >
+                        Track Live
+                      </button>
+                    )
                   )}
                 </div>
               </div>
@@ -1549,25 +1572,54 @@ const Orders = () => {
                 
                 {routingData && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                    {/* Metrics grid */}
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px' }}>
+                    {/* Terrain badge + ETA headline */}
+                    {routingData.optimized?.breakdown && (
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '6px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span style={{ fontSize: '0.65rem', fontWeight: 700, background: routingData.optimized.breakdown.terrain_type === 'Plain' ? 'rgba(16,185,129,0.1)' : routingData.optimized.breakdown.terrain_type === 'Mixed' ? 'rgba(249,115,22,0.1)' : 'rgba(239,68,68,0.1)', color: routingData.optimized.breakdown.terrain_type === 'Plain' ? '#10b981' : routingData.optimized.breakdown.terrain_type === 'Mixed' ? '#f97316' : '#ef4444', padding: '2px 8px', borderRadius: '20px', textTransform: 'uppercase' }}>⛰ {routingData.optimized.breakdown.terrain_type} Terrain</span>
+                          {routingData.optimized.breakdown.hilly_km > 0 && <span style={{ fontSize: '0.6rem', color: '#94a3b8' }}>{routingData.optimized.breakdown.plain_km.toFixed(0)} km plain · {routingData.optimized.breakdown.hilly_km.toFixed(0)} km hilly</span>}
+                        </div>
+                        <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#f97316' }}>🕐 ETA: {Math.round(routingData.optimized.breakdown.total_hours)}h transit</div>
+                      </div>
+                    )}
+                    {/* Metrics grid: 3 columns */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' }}>
                       <div style={{ background: 'var(--bg-card, #fff)', padding: '10px', borderRadius: '10px', border: '1px solid var(--border-color, #e2e8f0)', textAlign: 'center' }}>
-                        <div style={{ fontSize: '0.65rem', color: '#64748b', fontWeight: 'bold' }}>DISTANCE</div>
-                        <div style={{ fontSize: '0.9rem', fontWeight: 800, color: '#f97316' }}>{routingData.optimized.distance_km.toFixed(1)} km</div>
-                        <div style={{ fontSize: '0.6rem', color: '#10b981', fontWeight: 600 }}>Save {routingData.savings.distance_km.toFixed(1)} km</div>
+                        <div style={{ fontSize: '0.6rem', color: '#64748b', fontWeight: 'bold' }}>DISTANCE</div>
+                        <div style={{ fontSize: '0.85rem', fontWeight: 800, color: '#f97316' }}>{routingData.optimized.distance_km.toFixed(1)} km</div>
+                        <div style={{ fontSize: '0.58rem', color: '#10b981', fontWeight: 600 }}>Save {routingData.savings.distance_km.toFixed(1)} km</div>
                       </div>
                       <div style={{ background: 'var(--bg-card, #fff)', padding: '10px', borderRadius: '10px', border: '1px solid var(--border-color, #e2e8f0)', textAlign: 'center' }}>
-                        <div style={{ fontSize: '0.65rem', color: '#64748b', fontWeight: 'bold' }}>FUEL COST</div>
-                        <div style={{ fontSize: '0.9rem', fontWeight: 800, color: '#f97316' }}>₹{Math.round(routingData.optimized.fuel_cost).toLocaleString('en-IN')}</div>
-                        <div style={{ fontSize: '0.6rem', color: '#10b981', fontWeight: 600 }}>Save ₹{Math.round(routingData.savings.fuel_cost).toLocaleString('en-IN')}</div>
+                        <div style={{ fontSize: '0.6rem', color: '#64748b', fontWeight: 'bold' }}>FUEL COST</div>
+                        <div style={{ fontSize: '0.85rem', fontWeight: 800, color: '#f97316' }}>₹{Math.round(routingData.optimized.fuel_cost).toLocaleString('en-IN')}</div>
+                        <div style={{ fontSize: '0.58rem', color: '#10b981', fontWeight: 600 }}>Save ₹{Math.round(routingData.savings.fuel_cost).toLocaleString('en-IN')}</div>
                       </div>
                       <div style={{ background: 'var(--bg-card, #fff)', padding: '10px', borderRadius: '10px', border: '1px solid var(--border-color, #e2e8f0)', textAlign: 'center' }}>
-                        <div style={{ fontSize: '0.65rem', color: '#64748b', fontWeight: 'bold' }}>CO2 EMISSIONS</div>
-                        <div style={{ fontSize: '0.9rem', fontWeight: 800, color: '#f97316' }}>{routingData.optimized.co2_kg.toFixed(1)} kg</div>
-                        <div style={{ fontSize: '0.6rem', color: '#10b981', fontWeight: 600 }}>Save {routingData.savings.co2_kg.toFixed(1)} kg</div>
+                        <div style={{ fontSize: '0.6rem', color: '#64748b', fontWeight: 'bold' }}>CO₂</div>
+                        <div style={{ fontSize: '0.85rem', fontWeight: 800, color: '#f97316' }}>{routingData.optimized.co2_kg.toFixed(1)} kg</div>
+                        <div style={{ fontSize: '0.58rem', color: '#10b981', fontWeight: 600 }}>Save {routingData.savings.co2_kg.toFixed(1)} kg</div>
                       </div>
                     </div>
-                    
+                    {/* Breakdown strip */}
+                    {routingData.optimized?.breakdown && (
+                      <div style={{ background: 'var(--bg-card, #fff)', borderRadius: '10px', border: '1px solid var(--border-color, #e2e8f0)', padding: '10px 14px' }}>
+                        <div style={{ fontSize: '0.6rem', color: '#94a3b8', fontWeight: 700, textTransform: 'uppercase', marginBottom: '8px' }}>Time Breakdown (1 Driver · Motor Vehicles Act)</div>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px' }}>
+                          <div style={{ textAlign: 'center' }}>
+                            <div style={{ fontSize: '0.78rem', fontWeight: 800, color: '#1e293b' }}>{routingData.optimized.breakdown.pure_driving_hours}h</div>
+                            <div style={{ fontSize: '0.58rem', color: '#64748b' }}>🚛 Driving</div>
+                          </div>
+                          <div style={{ textAlign: 'center' }}>
+                            <div style={{ fontSize: '0.78rem', fontWeight: 800, color: '#f59e0b' }}>{routingData.optimized.breakdown.break_hours}h</div>
+                            <div style={{ fontSize: '0.58rem', color: '#64748b' }}>☕ Break Hours</div>
+                          </div>
+                          <div style={{ textAlign: 'center' }}>
+                            <div style={{ fontSize: '0.78rem', fontWeight: 800, color: '#ef4444' }}>{routingData.optimized.breakdown.checkpoint_delays}h</div>
+                            <div style={{ fontSize: '0.58rem', color: '#64748b' }}>🛂 Checkpoint Delays</div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                     {/* Mini Leaflet Map */}
                     <div style={{ height: '180px', width: '100%', borderRadius: '12px', overflow: 'hidden', border: '1px solid var(--border-color, #e2e8f0)' }}>
                       <MapContainer
@@ -1595,17 +1647,17 @@ const Orders = () => {
               </div>
  
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px' }}>
-                <div>
+                <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
                   <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', color: '#64748b', marginBottom: '6px' }}>
-                    ETA <span style={{ fontSize: '0.65rem', textTransform: 'none', color: '#f97316', fontWeight: 'normal' }}>(e.g. "24 Hours")</span>
+                    ETA
                   </label>
-                  <input type="text" value={eta} onChange={e => setEta(e.target.value)} style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', border: '1px solid #cbd5e1', outline: 'none' }} placeholder="24 Hours" />
+                  <input type="date" value={eta} onChange={e => setEta(e.target.value)} style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', border: '1px solid #cbd5e1', outline: 'none' }} />
                 </div>
-                <div>
+                <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
                   <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', color: '#64748b', marginBottom: '6px' }}>Price for Driver (INR)</label>
                   <input type="number" value={assignedAmount} onChange={e => setAssignedAmount(e.target.value)} style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', border: '1px solid #cbd5e1', outline: 'none' }} placeholder="25000" />
                 </div>
-                <div>
+                <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
                   <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', color: '#64748b', marginBottom: '6px' }}>Price for Buyer (INR)</label>
                   <input type="number" value={buyerAmount} onChange={e => setBuyerAmount(e.target.value)} style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', border: '1px solid #cbd5e1', outline: 'none' }} placeholder="30000" />
                 </div>
@@ -1682,10 +1734,7 @@ const Orders = () => {
                 <div>
                   <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', color: '#64748b', marginBottom: '6px' }}>Order Status</label>
                   <select value={orderStatus} onChange={e => setOrderStatus(e.target.value)} style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', border: '1px solid #cbd5e1', outline: 'none', background: 'var(--bg-card)' }}>
-                    <option value="Pending">Pending</option>
-                    <option value="Assigned">Assigned</option>
-                    <option value="Running">Running</option>
-                    <option value="Delivered">Delivered</option>
+                    <option value="Not Confirmed">Not Confirmed</option>
                     <option value="Confirmed">Confirmed</option>
                   </select>
                 </div>
@@ -1962,25 +2011,54 @@ const Orders = () => {
                 
                 {editRoutingData && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                    {/* Metrics grid */}
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px' }}>
+                    {/* Terrain badge + ETA headline */}
+                    {editRoutingData.optimized?.breakdown && (
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '6px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span style={{ fontSize: '0.65rem', fontWeight: 700, background: editRoutingData.optimized.breakdown.terrain_type === 'Plain' ? 'rgba(16,185,129,0.1)' : editRoutingData.optimized.breakdown.terrain_type === 'Mixed' ? 'rgba(249,115,22,0.1)' : 'rgba(239,68,68,0.1)', color: editRoutingData.optimized.breakdown.terrain_type === 'Plain' ? '#10b981' : editRoutingData.optimized.breakdown.terrain_type === 'Mixed' ? '#f97316' : '#ef4444', padding: '2px 8px', borderRadius: '20px', textTransform: 'uppercase' }}>⛰ {editRoutingData.optimized.breakdown.terrain_type} Terrain</span>
+                          {editRoutingData.optimized.breakdown.hilly_km > 0 && <span style={{ fontSize: '0.6rem', color: '#94a3b8' }}>{editRoutingData.optimized.breakdown.plain_km.toFixed(0)} km plain · {editRoutingData.optimized.breakdown.hilly_km.toFixed(0)} km hilly</span>}
+                        </div>
+                        <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#f97316' }}>🕐 ETA: {Math.round(editRoutingData.optimized.breakdown.total_hours)}h transit</div>
+                      </div>
+                    )}
+                    {/* Metrics grid: 3 columns */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' }}>
                       <div style={{ background: 'var(--bg-card, #fff)', padding: '10px', borderRadius: '10px', border: '1px solid var(--border-color, #e2e8f0)', textAlign: 'center' }}>
-                        <div style={{ fontSize: '0.65rem', color: '#64748b', fontWeight: 'bold' }}>DISTANCE</div>
-                        <div style={{ fontSize: '0.9rem', fontWeight: 800, color: '#f97316' }}>{editRoutingData.optimized.distance_km.toFixed(1)} km</div>
-                        <div style={{ fontSize: '0.6rem', color: '#10b981', fontWeight: 600 }}>Save {editRoutingData.savings.distance_km.toFixed(1)} km</div>
+                        <div style={{ fontSize: '0.6rem', color: '#64748b', fontWeight: 'bold' }}>DISTANCE</div>
+                        <div style={{ fontSize: '0.85rem', fontWeight: 800, color: '#f97316' }}>{editRoutingData.optimized.distance_km.toFixed(1)} km</div>
+                        <div style={{ fontSize: '0.58rem', color: '#10b981', fontWeight: 600 }}>Save {editRoutingData.savings.distance_km.toFixed(1)} km</div>
                       </div>
                       <div style={{ background: 'var(--bg-card, #fff)', padding: '10px', borderRadius: '10px', border: '1px solid var(--border-color, #e2e8f0)', textAlign: 'center' }}>
-                        <div style={{ fontSize: '0.65rem', color: '#64748b', fontWeight: 'bold' }}>FUEL COST</div>
-                        <div style={{ fontSize: '0.9rem', fontWeight: 800, color: '#f97316' }}>₹{Math.round(editRoutingData.optimized.fuel_cost).toLocaleString('en-IN')}</div>
-                        <div style={{ fontSize: '0.6rem', color: '#10b981', fontWeight: 600 }}>Save ₹{Math.round(editRoutingData.savings.fuel_cost).toLocaleString('en-IN')}</div>
+                        <div style={{ fontSize: '0.6rem', color: '#64748b', fontWeight: 'bold' }}>FUEL COST</div>
+                        <div style={{ fontSize: '0.85rem', fontWeight: 800, color: '#f97316' }}>₹{Math.round(editRoutingData.optimized.fuel_cost).toLocaleString('en-IN')}</div>
+                        <div style={{ fontSize: '0.58rem', color: '#10b981', fontWeight: 600 }}>Save ₹{Math.round(editRoutingData.savings.fuel_cost).toLocaleString('en-IN')}</div>
                       </div>
                       <div style={{ background: 'var(--bg-card, #fff)', padding: '10px', borderRadius: '10px', border: '1px solid var(--border-color, #e2e8f0)', textAlign: 'center' }}>
-                        <div style={{ fontSize: '0.65rem', color: '#64748b', fontWeight: 'bold' }}>CO2 EMISSIONS</div>
-                        <div style={{ fontSize: '0.9rem', fontWeight: 800, color: '#f97316' }}>{editRoutingData.optimized.co2_kg.toFixed(1)} kg</div>
-                        <div style={{ fontSize: '0.6rem', color: '#10b981', fontWeight: 600 }}>Save {editRoutingData.savings.co2_kg.toFixed(1)} kg</div>
+                        <div style={{ fontSize: '0.6rem', color: '#64748b', fontWeight: 'bold' }}>CO₂</div>
+                        <div style={{ fontSize: '0.85rem', fontWeight: 800, color: '#f97316' }}>{editRoutingData.optimized.co2_kg.toFixed(1)} kg</div>
+                        <div style={{ fontSize: '0.58rem', color: '#10b981', fontWeight: 600 }}>Save {editRoutingData.savings.co2_kg.toFixed(1)} kg</div>
                       </div>
                     </div>
-                    
+                    {/* Breakdown strip */}
+                    {editRoutingData.optimized?.breakdown && (
+                      <div style={{ background: 'var(--bg-card, #fff)', borderRadius: '10px', border: '1px solid var(--border-color, #e2e8f0)', padding: '10px 14px' }}>
+                        <div style={{ fontSize: '0.6rem', color: '#94a3b8', fontWeight: 700, textTransform: 'uppercase', marginBottom: '8px' }}>Time Breakdown (1 Driver · Motor Vehicles Act)</div>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px' }}>
+                          <div style={{ textAlign: 'center' }}>
+                            <div style={{ fontSize: '0.78rem', fontWeight: 800, color: '#1e293b' }}>{editRoutingData.optimized.breakdown.pure_driving_hours}h</div>
+                            <div style={{ fontSize: '0.58rem', color: '#64748b' }}>🚛 Driving</div>
+                          </div>
+                          <div style={{ textAlign: 'center' }}>
+                            <div style={{ fontSize: '0.78rem', fontWeight: 800, color: '#f59e0b' }}>{editRoutingData.optimized.breakdown.break_hours}h</div>
+                            <div style={{ fontSize: '0.58rem', color: '#64748b' }}>☕ Break Hours</div>
+                          </div>
+                          <div style={{ textAlign: 'center' }}>
+                            <div style={{ fontSize: '0.78rem', fontWeight: 800, color: '#ef4444' }}>{editRoutingData.optimized.breakdown.checkpoint_delays}h</div>
+                            <div style={{ fontSize: '0.58rem', color: '#64748b' }}>🛂 Checkpoint Delays</div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                     {/* Mini Leaflet Map */}
                     <div style={{ height: '180px', width: '100%', borderRadius: '12px', overflow: 'hidden', border: '1px solid var(--border-color, #e2e8f0)' }}>
                       <MapContainer
@@ -2008,17 +2086,17 @@ const Orders = () => {
               </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px' }}>
-                <div>
+                <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
                   <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', color: '#64748b', marginBottom: '6px' }}>
-                    ETA <span style={{ fontSize: '0.65rem', textTransform: 'none', color: '#f97316', fontWeight: 'normal' }}>(e.g. "24 Hours")</span>
+                    ETA
                   </label>
-                  <input type="text" value={editEta} onChange={e => setEditEta(e.target.value)} style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', border: '1px solid #cbd5e1', outline: 'none' }} placeholder="24 Hours" />
+                  <input type="date" value={editEta} onChange={e => setEditEta(e.target.value)} style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', border: '1px solid #cbd5e1', outline: 'none' }} />
                 </div>
-                <div>
+                <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
                   <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', color: '#64748b', marginBottom: '6px' }}>Price for Driver (INR)</label>
                   <input type="number" value={editAssignedAmount} onChange={e => setEditAssignedAmount(e.target.value)} style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', border: '1px solid #cbd5e1', outline: 'none' }} placeholder="25000" />
                 </div>
-                <div>
+                <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
                   <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', color: '#64748b', marginBottom: '6px' }}>Price for Buyer (INR)</label>
                   <input type="number" value={editBuyerAmount} onChange={e => setEditBuyerAmount(e.target.value)} style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', border: '1px solid #cbd5e1', outline: 'none' }} placeholder="30000" />
                 </div>

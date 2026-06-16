@@ -56,7 +56,6 @@ const Sidebar = () => {
       ) : null
     },
     { to: "/Fleet", label: 'Fleet' },
-    { to: "/Dispatch", label: 'Dispatch' },
     { to: "/payments-dashboard", label: 'Payments' },
     { to: "/ai-assistance", label: 'AI Assistance' },
   ];

@@ -5,6 +5,7 @@ import {
   Building2, X, CheckCircle, Pencil, Home
 } from "lucide-react";
 import KineticLoader from "../components/KineticLoader";
+import EmptyState, { getFriendlyError } from "../components/EmptyState";
 
 const API_BASE = process.env.REACT_APP_API_URL || "http://localhost:5000";
 
@@ -209,38 +210,28 @@ const BuyerWarehouses = () => {
       )}
       {error && (
         <div style={{
-          background: "#fee2e2", color: "#ef4444", padding: "12px 16px",
-          borderRadius: "12px", fontSize: "0.85rem", fontWeight: 600,
-          marginBottom: "16px", border: "1px solid #fecaca"
+          background: "#fef2f2", color: "#ef4444", padding: "12px 16px",
+          borderRadius: "12px", border: "1px solid #fee2e2", marginBottom: "20px",
+          display: "flex", justifyContent: "space-between", alignItems: "center"
         }}>
-          ✗ {error}
+          ✗ {getFriendlyError(error)}
           <button onClick={() => setError(null)} style={{ float: "right", background: "none", border: "none", color: "#ef4444", cursor: "pointer" }}>×</button>
         </div>
       )}
 
-
       {/* Empty State */}
       {!loading && warehouses.length === 0 && (
-        <div style={{
-          textAlign: "center", padding: "64px 32px",
-          background: "var(--bg-card)", borderRadius: "20px",
-          border: "2px dashed var(--border-color, rgba(0,0,0,0.1))"
-        }}>
-          <div style={{
-            width: "72px", height: "72px", borderRadius: "50%",
-            background: "linear-gradient(135deg, rgba(249,115,22,0.15) 0%, rgba(234,88,12,0.1) 100%)",
-            display: "flex", alignItems: "center", justifyContent: "center",
-            margin: "0 auto 16px"
-          }}>
-            <Building2 size={32} color="#f97316" />
-          </div>
-          <h3 style={{ margin: "0 0 8px 0", color: "var(--text-primary)", fontWeight: 700 }}>
-            No Destination Warehouses Yet
-          </h3>
-          <p style={{ color: "var(--text-secondary)", margin: "0 0 24px 0", maxWidth: "400px", marginLeft: "auto", marginRight: "auto" }}>
-            Add warehouses where you want sellers to deliver your goods. 
-            Sellers will see these when assigning drop locations for your orders.
-          </p>
+        <EmptyState
+          icon={Building2}
+          title="No Destination Warehouses Yet"
+          message="Add warehouses where you want sellers to deliver your goods. Sellers will see these when assigning drop locations for your orders."
+          style={{
+            background: "var(--bg-card)",
+            borderRadius: "20px",
+            border: "2px dashed var(--border-color, rgba(0,0,0,0.1))",
+            padding: "64px 32px",
+          }}
+        >
           <button
             onClick={openAddModal}
             style={{
@@ -248,13 +239,12 @@ const BuyerWarehouses = () => {
               padding: "12px 24px",
               background: "linear-gradient(135deg, #f97316 0%, #ea580c 100%)",
               color: "white", border: "none", borderRadius: "12px",
-              fontWeight: 700, cursor: "pointer",
-              boxShadow: "0 4px 14px rgba(249,115,22,0.3)"
+              fontWeight: 700, cursor: "pointer", transition: "all 0.2s"
             }}
           >
-            <Plus size={16} /> Add Your First Warehouse
+            <Plus size={18} /> Add Your First Warehouse
           </button>
-        </div>
+        </EmptyState>
       )}
 
       {/* Warehouse Cards Grid */}
@@ -506,7 +496,7 @@ const BuyerWarehouses = () => {
                 borderRadius: "12px", fontSize: "0.85rem", fontWeight: 600,
                 marginBottom: "16px", border: "1px solid #fecaca"
               }}>
-                ✗ {formError}
+                ✗ {getFriendlyError(formError)}
               </div>
             )}
 

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { Clock, FileText, Download, X } from "lucide-react";
 import supabase from "../config/SupabaseClient";
 import KineticLoader from "../components/KineticLoader";
+import EmptyState from "../components/EmptyState";
 
 // Helper to convert number to Indian Rupees words
 const amountInWords = (num) => {
@@ -463,13 +464,16 @@ const BuyerInvoices = () => {
             <p style={{ color: "var(--text-secondary)" }}>Loading your invoices...</p>
           </div>
         ) : invoices.length === 0 ? (
-          <div style={{ padding: "60px", textAlign: "center" }}>
-            <div style={{ display: "flex", justifyContent: "center", marginBottom: "14px" }}><FileText size={48} style={{ color: "var(--text-secondary)" }} /></div>
-            <h3 style={{ color: "var(--text-primary)", marginBottom: "8px" }}>No Invoices Yet</h3>
-            <p style={{ color: "var(--text-secondary)", fontSize: "0.9rem", maxWidth: "360px", margin: "0 auto" }}>
-              Invoices are generated automatically after you complete a payment. Go to <strong>Payments</strong> to pay for your orders.
-            </p>
-          </div>
+          <EmptyState
+            icon={FileText}
+            title="No Invoices Yet"
+            message="Invoices are generated automatically after you complete a payment. Go to Payments to pay for your orders."
+            style={{
+              background: "white",
+              borderRadius: "16px",
+              border: "1px solid var(--border-color)",
+            }}
+          />
         ) : (
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse" }}>

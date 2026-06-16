@@ -3,6 +3,7 @@ import { User, Phone, MapPin, Tag, CheckCircle, XCircle, Route, TrendingUp, Leaf
 import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from "react-leaflet"
 import L from "leaflet"
 import supabase from "../config/SupabaseClient"
+import { getFriendlyError } from "../components/EmptyState";
 
 const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:5000'
 
@@ -556,7 +557,7 @@ const MapView = () => {
 
                             {routeError && (
                                 <div style={{ padding: '12px', background: '#fee2e2', color: '#ef4444', borderRadius: '12px', fontSize: '0.82rem', fontWeight: 600 }}>
-                                    ⚠ {routeError}
+                                    ⚠ {getFriendlyError(routeError)}
                                 </div>
                             )}
 

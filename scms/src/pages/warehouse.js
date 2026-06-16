@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react"
 import supabase from "../config/SupabaseClient"
 import WarehouseMap from '../components/WarehouseMap';
+import EmptyState from '../components/EmptyState';
+import { Warehouse as WarehouseIcon, RefreshCw } from 'lucide-react';
 
 const Warehouse = () => {
     const [fetchError, setFetchError] = useState(null)
@@ -13,7 +15,7 @@ const Warehouse = () => {
                 .select()
 
             if (error) {
-                setFetchError('Could not fetch warehouse data')
+                setFetchError(true)
                 setWarehouseData(null)
                 console.log(error)
             }
@@ -41,10 +43,24 @@ const Warehouse = () => {
 
 
 
-            {fetchError && (<p className="error">{fetchError}</p>)}
+            {fetchError && (
+                <EmptyState
+                    icon={RefreshCw}
+                    title="Data Temporarily Unavailable"
+                    message="We couldn't load warehouse data right now. Please refresh to try again."
+                    variant="warning"
+                    size="md"
+                />
+            )}
 
             {warehouseData && warehouseData.length === 0 && (
-                <p>No data found! Warehouse table might be empty or RLS is blocking access.</p>
+                <EmptyState
+                    icon={WarehouseIcon}
+                    title="Warehouse Ready"
+                    message="Inventory records will appear here as stock arrives."
+                    size="lg"
+                    style={{ minHeight: '240px' }}
+                />
             )}
 
             {warehouseData && warehouseData.length > 0 && (

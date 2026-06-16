@@ -1,8 +1,49 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { UserCheck, Truck, Coffee, IndianRupee, CheckCircle, BarChart3, MapPin, Navigation, Clock, Camera, Leaf, Loader2, X, Compass, Shield, AlertTriangle, Flag, Ban, XCircle, Check } from 'lucide-react';
+import { UserCheck, Truck, Coffee, IndianRupee, CheckCircle, BarChart3, MapPin, Navigation, Clock, Camera, Leaf, Loader2, X, Compass, Shield, AlertTriangle, Flag, Ban, XCircle, Check, PackageOpen, Map, SearchX } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Polyline } from 'react-leaflet';
 import L from 'leaflet';
 import supabase from '../config/SupabaseClient';
+import EmptyState from '../components/EmptyState';
+
+const formatIndianPhoneNumber = (value) => {
+  if (!value) return '';
+  let digits = value.replace(/\D/g, '');
+  const cleanInput = value.trim();
+  if (cleanInput.startsWith('+91') || cleanInput.startsWith('91')) {
+    if (digits.startsWith('91')) {
+      digits = digits.slice(2);
+    }
+  }
+  const core = digits.slice(0, 10);
+  if (core.length > 0) {
+    return `+91 ${core}`;
+  }
+  return '';
+};
+
+// Format DL: SS RR YYYY NNNNNNN  e.g. "KA 04 2020 0123456"
+const formatDrivingLicense = (value) => {
+  if (!value) return '';
+  const upper = value.toUpperCase();
+  const chars = upper.replace(/[^A-Z0-9]/g, '');
+  let result = '';
+  const ss = chars.slice(0, 2).replace(/[^A-Z]/g, '');
+  result += ss;
+  if (chars.length > 2) {
+    const rrRaw = chars.slice(2).replace(/[^0-9]/g, '');
+    const rr = rrRaw.slice(0, 2);
+    result += ' ' + rr;
+    if (rrRaw.length > 2) {
+      const yyyy = rrRaw.slice(2, 6);
+      result += ' ' + yyyy;
+      if (rrRaw.length > 6) {
+        const nnn = rrRaw.slice(6, 13);
+        result += ' ' + nnn;
+      }
+    }
+  }
+  return result.trim();
+};
 
 const API = process.env.REACT_APP_API_URL || "http://localhost:5000";
 
@@ -253,7 +294,7 @@ const DriverHub = () => {
   const [searchId, setSearchId] = useState('');
   const [earning, setEarning] = useState(null);
   const [earningsLoading, setEarningsLoading] = useState(false);
-  const [earningsError, setEarningsError] = useState(null);
+  const [_earningsError, setEarningsError] = useState(null);
 
   // all earnings for this driver
   const [allEarnings, setAllEarnings] = useState([]);
@@ -379,6 +420,11 @@ const DriverHub = () => {
   const handleStartJourney = async (trip) => {
     if (journeyStartingRef.current) return;
     if (!user) return;
+    // Payment gate: only allow journey if buyer has confirmed payment
+    if (trip.payment_status !== 'paid') {
+      alert('\u26a0\ufe0f Cannot start journey. The buyer has not confirmed payment yet. Please wait for payment confirmation before starting the trip.');
+      return;
+    }
     if (driveMinutesRef.current >= 480) {
       setBreachModalOpen(true);
       // Log breach
@@ -416,7 +462,7 @@ const DriverHub = () => {
       setDutyTimerActive(true);
       await updateDriverStatus('on_trip');
     } catch (err) {
-      alert('Error starting journey: ' + err.message);
+      alert('Something went wrong starting your journey. Please try again.');
     } finally {
       journeyStartingRef.current = false;
       setJourneyStarting(null);
@@ -448,7 +494,7 @@ const DriverHub = () => {
         await updateDriverStatus('on_break');
       }
     } catch (err) {
-      alert('Check-in failed: ' + err.message);
+      alert('Check-in could not be recorded. Please try again.');
     } finally {
       checkingInRef.current.delete(cpId);
       setCheckingIn(null);
@@ -488,8 +534,8 @@ const DriverHub = () => {
     setProfileComplete(isComplete);
 
     setFullName(profileRow?.full_name || '');
-    setPhone(profileRow?.phone || '');
-    setLicenseNumber(driverRow?.license_number || '');
+    setPhone(formatIndianPhoneNumber(profileRow?.phone) || '');
+    setLicenseNumber(formatDrivingLicense(driverRow?.license_number || ''));
     setVerificationStatus(driverRow?.verified ? 'Verified' : 'Unverified');
 
     setVehicleNumber(formatVehicleNumber(fleetRow?.vehicle_number || ''));
@@ -567,7 +613,7 @@ const DriverHub = () => {
   useEffect(() => {
     if (!user) return;
     if (!navigator.geolocation) {
-      setGpsError('GPS not available on this device');
+      setGpsError('Location services are unavailable on this device.');
       return;
     }
     let lastUpdateTime = 0;
@@ -610,7 +656,7 @@ const DriverHub = () => {
           }
         }
       },
-      (err) => setGpsError('GPS error: ' + err.message),
+      (err) => setGpsError('Location access denied. Enable GPS to track your journey.'),
       { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 }
     );
 
@@ -725,7 +771,7 @@ const DriverHub = () => {
 
       const resData = await response.json();
       if (!response.ok) {
-        throw new Error(resData.error || 'Failed to update status');
+        throw new Error(resData.error || 'Unable to update status. Please try again.');
       }
 
       setStatus(newStatus);
@@ -733,7 +779,7 @@ const DriverHub = () => {
       setVehicleActive(newStatus === 'active');
     } catch (err) {
       console.error(err);
-      alert("Error changing status: " + err.message);
+      alert("Couldn't update your status right now. Please try again.");
     }
   };
 
@@ -781,14 +827,14 @@ const DriverHub = () => {
 
       const resData = await response.json();
       if (!response.ok) {
-        throw new Error(resData.error || 'Failed to onboard driver');
+        throw new Error(resData.error || 'Unable to save your profile. Please try again.');
       }
 
       setProfileComplete(true);
       setVerificationStatus('Unverified');
       await fetchDriverState(user);
     } catch (err) {
-      alert("Error saving details: " + err.message);
+      alert("Couldn't save your details. Please check your information and try again.");
     } finally {
       setProfileLoading(false);
     }
@@ -816,13 +862,13 @@ const DriverHub = () => {
 
       const resData = await response.json();
       if (!response.ok) {
-        throw new Error(resData.error || 'Failed to update profile');
+        throw new Error(resData.error || 'Unable to update your profile. Please try again.');
       }
 
       alert("Driver profile and Fleet details updated successfully!");
       await fetchDriverState(user);
     } catch (err) {
-      alert("Error updating details: " + err.message);
+      alert("Couldn't update your details right now. Please try again.");
     } finally {
       setStatusLoading(false);
     }
@@ -851,9 +897,9 @@ const DriverHub = () => {
         .maybeSingle();
       if (dbError) throw dbError;
       if (data) setEarning(data);
-      else setEarningsError('No earning record found for this ID.');
+      else setEarningsError('No record found for this ID. Please check and try again.');
     } catch (err) {
-      setEarningsError('An error occurred while fetching data.');
+      setEarningsError('Something went wrong. Please try again shortly.');
     } finally {
       setEarningsLoading(false);
     }
@@ -924,7 +970,7 @@ const DriverHub = () => {
       await completeJourneyState(loadId);
       setUploadMsg(prev => ({ ...prev, [loadId]: { ok: true, msg: 'POD uploaded & Journey Completed!' } }));
     } catch (err) {
-      setUploadMsg(prev => ({ ...prev, [loadId]: { ok: false, msg: 'Upload failed: ' + err.message } }));
+      setUploadMsg(prev => ({ ...prev, [loadId]: { ok: false, msg: 'Upload unsuccessful. Please check your file and try again.' } }));
     } finally {
       setUploadingFor(null);
     }
@@ -990,11 +1036,7 @@ const DriverHub = () => {
     const dbTrips = trips.filter(t => ['delivered', 'completed', 'Completed', 'Delivered'].includes(t.status));
     
     if (dbTrips.length === 0) {
-      return [
-        { load_id: 'ORD-588650', route: 'Bangalore → Mumbai', status: 'Completed', amount: 2500, isMock: true },
-        { load_id: 'ORD-588120', route: 'Hyderabad → Pune', status: 'Completed', amount: 1800, isMock: true },
-        { load_id: 'ORD-587900', route: 'Chennai → Bangalore', status: 'Completed', amount: 1600, isMock: true },
-      ];
+      return [];
     }
 
     return dbTrips.map(t => ({
@@ -1006,15 +1048,7 @@ const DriverHub = () => {
     }));
   };
 
-  const activeLoad = trips.find(t => !['delivered', 'completed', 'Delivered', 'Completed'].includes(t.status)) || {
-    load_id: 'ORD-588650',
-    pickup: 'Bangalore Warehouse',
-    drop: 'Mumbai Dock',
-    eta: '10 Jun 2026',
-    status: 'In Transit',
-    assigned_amount: 2500,
-    isMock: true
-  };
+  const activeLoad = trips.find(t => !['delivered', 'completed', 'Delivered', 'Completed'].includes(t.status)) || null;
 
   const sc = STATUS_CONFIG[status] || STATUS_CONFIG.active;
 
@@ -1046,11 +1080,11 @@ const DriverHub = () => {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
               <div>
                 <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-secondary)', marginBottom: '6px' }}>Phone Number</label>
-                <input type="text" required value={phone} onChange={e => setPhone(e.target.value)} style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', border: '1px solid var(--border-color)', outline: 'none', background: 'var(--bg-primary)', color: 'var(--text-primary)' }} placeholder="+91 98765 43210" />
+                <input type="text" required value={phone} onChange={e => setPhone(formatIndianPhoneNumber(e.target.value))} style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', border: '1px solid var(--border-color)', outline: 'none', background: 'var(--bg-primary)', color: 'var(--text-primary)' }} placeholder="+91 9876543210" />
               </div>
               <div>
-                <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-secondary)', marginBottom: '6px' }}>License Number</label>
-                <input type="text" required value={licenseNumber} onChange={e => setLicenseNumber(e.target.value)} style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', border: '1px solid var(--border-color)', outline: 'none', background: 'var(--bg-primary)', color: 'var(--text-primary)' }} placeholder="DL-14201100..." />
+                <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-secondary)', marginBottom: '6px' }}>License Number (DL)</label>
+                <input type="text" required value={licenseNumber} onChange={e => setLicenseNumber(formatDrivingLicense(e.target.value))} style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', border: '1px solid var(--border-color)', outline: 'none', background: 'var(--bg-primary)', color: 'var(--text-primary)' }} placeholder="KA 04 2020 0123456" />
               </div>
             </div>
 
@@ -1252,7 +1286,7 @@ const DriverHub = () => {
                 <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', fontWeight: 600 }}>
                   {gpsCoords
                     ? `GPS Active — ${gpsCoords.lat.toFixed(4)}, ${gpsCoords.lng.toFixed(4)}`
-                    : gpsError ? <><AlertTriangle size={12}/> {gpsError}</> : 'Acquiring GPS...'}
+                    : gpsError ? <><AlertTriangle size={12}/> Location unavailable — enable GPS</> : 'Acquiring location...'}
                 </span>
               </div>
             </div>
@@ -1313,7 +1347,7 @@ const DriverHub = () => {
       </Card>
 
       {/* ── SECTION 1: CURRENT ASSIGNMENT ────────────────────────────────── */}
-      <div style={{
+      {activeLoad && <div style={{
         background: 'var(--bg-card, rgba(255, 255, 255, 0.8))',
         border: '2px solid var(--accent, #f97316)',
         borderRadius: '24px',
@@ -1439,7 +1473,8 @@ const DriverHub = () => {
           ) : (
             <button
               onClick={() => handleStartJourney(activeLoad)}
-              disabled={journeyLoadId === activeLoad.load_id || driveMinutes >= 480 || journeyStarting !== null}
+              disabled={journeyLoadId === activeLoad.load_id || driveMinutes >= 480 || journeyStarting !== null || activeLoad.payment_status !== 'paid'}
+              title={activeLoad.payment_status !== 'paid' ? 'Journey locked: Buyer payment not confirmed yet' : ''}
               style={{
                 flex: 1,
                 padding: '16px 28px',
@@ -1447,12 +1482,14 @@ const DriverHub = () => {
                 fontWeight: 800,
                 borderRadius: '12px',
                 border: 'none',
-                background: journeyLoadId === activeLoad.load_id
+                background: activeLoad.payment_status !== 'paid'
+                  ? 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)'
+                  : journeyLoadId === activeLoad.load_id
                   ? 'var(--bg-primary)'
                   : 'linear-gradient(135deg, #f97316 0%, #ea580c 100%)',
                 color: journeyLoadId === activeLoad.load_id ? 'var(--text-secondary)' : 'white',
-                cursor: (journeyLoadId === activeLoad.load_id || journeyStarting !== null) ? 'default' : 'pointer',
-                boxShadow: journeyLoadId === activeLoad.load_id ? 'none' : '0 4px 14px rgba(249,115,22,0.3)',
+                cursor: (journeyLoadId === activeLoad.load_id || journeyStarting !== null || activeLoad.payment_status !== 'paid') ? 'not-allowed' : 'pointer',
+                boxShadow: journeyLoadId === activeLoad.load_id ? 'none' : activeLoad.payment_status !== 'paid' ? '0 4px 14px rgba(239,68,68,0.3)' : '0 4px 14px rgba(249,115,22,0.3)',
                 transition: 'all 0.2s',
                 display: 'flex',
                 alignItems: 'center',
@@ -1462,7 +1499,7 @@ const DriverHub = () => {
               }}
             >
               <Truck size={20} />
-              <span>{journeyStarting === activeLoad.load_id ? 'Starting...' : (journeyLoadId === activeLoad.load_id ? 'Journey In Progress' : 'Start Journey')}</span>
+              <span>{journeyStarting === activeLoad.load_id ? 'Starting...' : (journeyLoadId === activeLoad.load_id ? 'Journey In Progress' : activeLoad.payment_status !== 'paid' ? '\uD83D\uDD12 Payment Not Confirmed' : 'Start Journey')}</span>
             </button>
           )}
 
@@ -1637,14 +1674,35 @@ const DriverHub = () => {
             </div>
           </div>
         )}
-      </div>
+      </div>}
+
+      {!activeLoad && !tripsLoading && (
+        <EmptyState
+          icon={Truck}
+          title="Your Next Mission Awaits"
+          message="No loads assigned yet. Stay ready—your next delivery is coming soon."
+          style={{
+            background: 'var(--bg-card, rgba(255,255,255,0.8))',
+            border: '2px dashed var(--border-color, #e2e8f0)',
+            borderRadius: '24px',
+            marginBottom: '24px'
+          }}
+        />
+      )}
 
       {/* ── TRIP LOG ────────────────────────────────────── */}
       <div style={{ marginBottom: '24px' }}>
         {/* Trip Log Card */}
         <Card title="Trip Log" subtitle="History of your completed assignments">
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', maxHeight: '320px', overflowY: 'auto', paddingRight: '6px' }}>
-            {getTripLogs().map((log, idx) => (
+            {getTripLogs().length === 0 ? (
+              <EmptyState
+                icon={Flag}
+                title="First Trip Coming Soon"
+                message="Complete a delivery to start building your journey."
+                size="sm"
+              />
+            ) : getTripLogs().map((log, idx) => (
               <div
                 key={log.load_id || idx}
                 style={{
@@ -1743,9 +1801,16 @@ const DriverHub = () => {
             )}
 
             {activeRouteError && (
-              <div style={{ padding: '16px', background: '#fee2e2', color: '#ef4444', borderRadius: '14px', fontSize: '0.85rem', fontWeight: 600 }}>
-                <XCircle size={14}/> Error calculating route: {activeRouteError}
-              </div>
+              <EmptyState
+                icon={Map}
+                title="No Route Available"
+                message="A route will appear once a delivery is assigned."
+                style={{
+                  background: 'rgba(249,115,22,0.08)',
+                  borderRadius: '14px',
+                  border: '1px solid rgba(249,115,22,0.25)',
+                }}
+              />
             )}
 
             {activeRouteData && (

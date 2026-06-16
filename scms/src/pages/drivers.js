@@ -1,7 +1,55 @@
 import { useEffect, useState, useRef } from "react"
-import { Search, ArrowUpDown, Filter } from 'lucide-react';
+import { Search, ArrowUpDown, Filter, Truck, UserCheck, SearchX, AlertTriangle, RefreshCw } from 'lucide-react';
 import supabase from "../config/SupabaseClient"
 import useClickOutside from "../hooks/useClickOutside"
+import EmptyState, { getFriendlyError } from "../components/EmptyState";
+
+const formatIndianPhoneNumber = (value) => {
+  if (!value) return '';
+  let digits = value.replace(/\D/g, '');
+  const cleanInput = value.trim();
+  if (cleanInput.startsWith('+91') || cleanInput.startsWith('91')) {
+    if (digits.startsWith('91')) {
+      digits = digits.slice(2);
+    }
+  }
+  const core = digits.slice(0, 10);
+  if (core.length > 0) {
+    return `+91 ${core}`;
+  }
+  return '';
+};
+
+// Format DL: SS RR YYYY NNNNNNN
+// E.g. "KA 04 2020 0123456"
+const formatDrivingLicense = (value) => {
+  if (!value) return '';
+  // Separate letters and digits for structured formatting
+  const upper = value.toUpperCase();
+  // Extract only alphanumeric characters
+  const chars = upper.replace(/[^A-Z0-9]/g, '');
+  let result = '';
+  // SS: 2 letters
+  const ss = chars.slice(0, 2).replace(/[^A-Z]/g, '');
+  result += ss;
+  if (chars.length > 2) {
+    // RR: next 2 digits
+    const rrRaw = chars.slice(2).replace(/[^0-9]/g, '');
+    const rr = rrRaw.slice(0, 2);
+    result += ' ' + rr;
+    if (rrRaw.length > 2) {
+      // YYYY: next 4 digits
+      const yyyy = rrRaw.slice(2, 6);
+      result += ' ' + yyyy;
+      if (rrRaw.length > 6) {
+        // NNNNNNN: next 7 digits
+        const nnn = rrRaw.slice(6, 13);
+        result += ' ' + nnn;
+      }
+    }
+  }
+  return result.trim();
+};
 
 const Driver = () => {
     const [fetchError, setFetchError] = useState(null)
@@ -59,7 +107,7 @@ const Driver = () => {
             `)
 
         if (error) {
-            setFetchError('Could not fetch drivers')
+            setFetchError('Unable to load drivers right now. Please try again shortly.')
             setDriverData(null)
             console.log(error)
         }
@@ -134,7 +182,7 @@ const Driver = () => {
             });
             const data = await res.json();
             if (!res.ok || data.error) {
-                throw new Error(data.error || "Failed to create driver");
+                throw new Error(data.error || "Unable to create driver account. Please try again.");
             }
             // Reset and close
             setIsAddModalOpen(false);
@@ -332,14 +380,34 @@ const Driver = () => {
                     )}
                 </div>
 
-            {fetchError && <p className="error">{fetchError}</p>}
+            {fetchError && (
+                <EmptyState
+                    icon={RefreshCw}
+                    title="Ready for the Next Move"
+                    message={getFriendlyError(fetchError) || "Couldn't load driver data right now. Please refresh to try again."}
+                    variant="warning"
+                    style={{ margin: '20px 0' }}
+                />
+            )}
 
             {driverData && driverData.length === 0 && (
-                <p>No drivers found! Add some drivers.</p>
+                <EmptyState
+                    icon={UserCheck}
+                    title="No Drivers Yet"
+                    message="Add your first driver to start managing your delivery fleet."
+                    style={{ margin: '20px 0', border: '2px dashed var(--border-color)', borderRadius: '20px' }}
+                />
             )}
 
             {sortedDrivers && sortedDrivers.length === 0 && driverData && driverData.length > 0 && (
-                <p style={{ color: 'var(--text-secondary)', textAlign: 'center', marginTop: '20px' }}>No drivers match the search criteria.</p>
+                <EmptyState
+                    icon={SearchX}
+                    title="No Matches Found"
+                    message="No drivers match your current search or filter criteria. Try adjusting your filters."
+                    variant="muted"
+                    size="sm"
+                    style={{ margin: '20px 0', border: '1px dashed var(--border-color)', borderRadius: '16px' }}
+                />
             )}
 
             {sortedDrivers && sortedDrivers.length > 0 && (
@@ -364,13 +432,13 @@ const Driver = () => {
                                 <div className="detail-item full-width">
                                     <span className="detail-label">EMAIL / PHONE</span>
                                     <span className="detail-value" style={{ textTransform: 'none' }}>
-                                        {driver.profiles?.email || 'N/A'} {driver.profiles?.phone ? `| ${driver.profiles.phone}` : ''}
+                                        {driver.profiles?.email || 'N/A'} {driver.profiles?.phone ? `| ${formatIndianPhoneNumber(driver.profiles.phone)}` : ''}
                                     </span>
                                 </div>
 
                                 <div className="detail-item">
-                                    <span className="detail-label">LICENSE</span>
-                                    <span className="detail-value">{driver.license_number || "N/A"}</span>
+                                    <span className="detail-label">LICENSE (DL)</span>
+                                    <span className="detail-value">{driver.license_number ? formatDrivingLicense(driver.license_number) : 'N/A'}</span>
                                 </div>
 
                                 <div className="detail-item stat-status">
@@ -407,11 +475,12 @@ const Driver = () => {
 
                         {addError && (
                             <div style={{
-                                padding: '12px 16px', background: '#fee2e2', color: '#ef4444',
+                                padding: '12px 16px', background: 'rgba(249,115,22,0.08)', color: '#ea580c',
                                 borderRadius: '12px', fontSize: '0.85rem', fontWeight: 600,
-                                marginBottom: '16px', border: '1px solid #fecaca'
+                                marginBottom: '16px', border: '1px solid rgba(249,115,22,0.25)',
+                                display: 'flex', alignItems: 'center', gap: '8px'
                             }}>
-                                ✗ {addError}
+                                <AlertTriangle size={16} /> {getFriendlyError(addError)}
                             </div>
                         )}
 
@@ -433,11 +502,11 @@ const Driver = () => {
                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                                 <div>
                                     <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', color: '#64748b', marginBottom: '6px' }}>Phone</label>
-                                    <input type="text" required value={phone} onChange={e => setPhone(e.target.value)} style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', border: '1px solid #cbd5e1', outline: 'none' }} placeholder="+91 98765 43210" />
+                                    <input type="text" required value={phone} onChange={e => setPhone(formatIndianPhoneNumber(e.target.value))} style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', border: '1px solid #cbd5e1', outline: 'none' }} placeholder="+91 9876543210" />
                                 </div>
                                 <div>
-                                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', color: '#64748b', marginBottom: '6px' }}>License Number</label>
-                                    <input type="text" required value={licenseNumber} onChange={e => setLicenseNumber(e.target.value)} style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', border: '1px solid #cbd5e1', outline: 'none' }} placeholder="DL-14201100..." />
+                                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', color: '#64748b', marginBottom: '6px' }}>License Number (DL)</label>
+                                    <input type="text" required value={licenseNumber} onChange={e => setLicenseNumber(formatDrivingLicense(e.target.value))} style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', border: '1px solid #cbd5e1', outline: 'none' }} placeholder="KA 04 2020 0123456" />
                                 </div>
                             </div>
 

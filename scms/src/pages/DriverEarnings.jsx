@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import supabase from '../config/SupabaseClient';
+import EmptyState, { getFriendlyError } from '../components/EmptyState';
+import { IndianRupee, AlertTriangle } from 'lucide-react';
 
 const DriverEarnings = () => {
     const [searchId, setSearchId] = useState('');
@@ -75,14 +77,31 @@ const DriverEarnings = () => {
                 </form>
 
                 {error && (
-                    <div className="error-message" style={styles.errorBox}>
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{marginRight: '10px'}}>
-                            <circle cx="12" cy="12" r="10"></circle>
-                            <line x1="12" y1="8" x2="12" y2="12"></line>
-                            <line x1="12" y1="16" x2="12.01" y2="16"></line>
-                        </svg>
-                        {error}
-                    </div>
+                    error === 'No earning record found for this ID.' ? (
+                        <EmptyState
+                            icon={IndianRupee}
+                            title="Earnings Dashboard Waiting"
+                            message="Your earnings will appear after your first completed trip."
+                            style={{ marginTop: '20px' }}
+                        />
+                    ) : (
+                        <EmptyState
+                            variant="warning"
+                            icon={AlertTriangle}
+                            title="Information Unreachable"
+                            message={getFriendlyError(error)}
+                            style={{ marginTop: '20px' }}
+                        />
+                    )
+                )}
+
+                {!earning && !loading && !error && (
+                    <EmptyState
+                        icon={IndianRupee}
+                        title="Earnings Dashboard Waiting"
+                        message="Your earnings will appear after your first completed trip."
+                        style={{ marginTop: '20px' }}
+                    />
                 )}
 
                 {earning && (

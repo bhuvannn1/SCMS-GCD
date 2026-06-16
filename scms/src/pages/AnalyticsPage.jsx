@@ -1,10 +1,99 @@
 import React, { useEffect, useState } from 'react';
 import supabase from "../config/SupabaseClient"
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import {
     BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
-    PieChart, Pie, Cell, CartesianGrid, Legend
+    PieChart, Pie, Cell, CartesianGrid, Legend, AreaChart, Area
 } from 'recharts';
+import { Activity, AlertTriangle, Flame, PackageCheck, Route, Timer, Truck, Warehouse } from 'lucide-react';
 import KineticLoader from '../components/KineticLoader';
+
+const BackgroundShader = () => {
+    useEffect(() => {
+        const canvas = document.getElementById('analytics-shader-canvas');
+        if (!canvas) return;
+        
+        function syncSize() {
+            const w = canvas.clientWidth || window.innerWidth;
+            const h = canvas.clientHeight || window.innerHeight;
+            if (canvas.width !== w || canvas.height !== h) {
+                canvas.width = w;
+                canvas.height = h;
+            }
+        }
+        if (typeof ResizeObserver !== 'undefined') {
+            new ResizeObserver(syncSize).observe(canvas);
+        }
+        syncSize();
+
+        const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+        if (!gl) return;
+        
+        const vs = `attribute vec2 a_position;
+varying vec2 v_texCoord;
+void main() {
+  v_texCoord = a_position * 0.5 + 0.5;
+  gl_Position = vec4(a_position, 0.0, 1.0);
+}`;
+        const fs = `precision highp float;
+varying vec2 v_texCoord;
+uniform float u_time;
+uniform vec2 u_resolution;
+
+void main() {
+    vec2 uv = v_texCoord;
+    float noise = sin(uv.x * 10.0 + u_time * 0.5) * cos(uv.y * 8.0 - u_time * 0.3);
+    float glow = smoothstep(0.4, 0.6, noise * 0.5 + 0.5);
+    vec3 baseColor = vec3(0.043, 0.059, 0.098); // #0B0F19
+    vec3 glowColor = vec3(1.0, 0.42, 0.0); // #FF6B00
+    vec3 finalColor = mix(baseColor, glowColor, glow * 0.15);
+    float dist = distance(uv, vec2(0.5));
+    finalColor *= 1.0 - smoothstep(0.5, 1.2, dist);
+    gl_FragColor = vec4(finalColor, 1.0);
+}`;
+        function cs(type, src) {
+            const s = gl.createShader(type);
+            gl.shaderSource(s, src);
+            gl.compileShader(s);
+            return s;
+        }
+        const prog = gl.createProgram();
+        gl.attachShader(prog, cs(gl.VERTEX_SHADER, vs));
+        gl.attachShader(prog, cs(gl.FRAGMENT_SHADER, fs));
+        gl.linkProgram(prog);
+        gl.useProgram(prog);
+        
+        const buf = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+        
+        const pos = gl.getAttribLocation(prog, 'a_position');
+        gl.enableVertexAttribArray(pos);
+        gl.vertexAttribPointer(pos, 2, gl.FLOAT, false, 0, 0);
+        
+        const uTime = gl.getUniformLocation(prog, 'u_time');
+        const uRes = gl.getUniformLocation(prog, 'u_resolution');
+        
+        let animationFrameId;
+        function render(t) {
+            if (typeof ResizeObserver === 'undefined') syncSize();
+            gl.viewport(0, 0, canvas.width, canvas.height);
+            if (uTime) gl.uniform1f(uTime, t * 0.001);
+            if (uRes) gl.uniform2f(uRes, canvas.width, canvas.height);
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+            animationFrameId = requestAnimationFrame(render);
+        }
+        render(0);
+        
+        return () => cancelAnimationFrame(animationFrameId);
+    }, []);
+
+    return (
+        <div style={{ position: 'fixed', inset: 0, width: '100%', height: '100%', opacity: 0.4, pointerEvents: 'none', zIndex: 0 }}>
+            <canvas id='analytics-shader-canvas' style={{ display: 'block', width: '100%', height: '100%' }}></canvas>
+        </div>
+    );
+};
 
 const AnimatedChart = ({ children }) => {
     const [isVisible, setIsVisible] = useState(false);
@@ -412,14 +501,44 @@ const AnalyticsPage = () => {
         fleet: [],
         orders: [],
         drivers: [],
-        warehouseStats: []
+        warehouseStats: [],
+        payments: []
     });
 
-    // We only use loading for the initial load, no global error state anymore
     const [loading, setLoading] = useState(true);
-
-    // Locale detection — reads Google Translate cookie every 2s so numbers render in the active language's numeral system
     const [locale, setLocale] = useState('en-IN');
+    const [aiInsights, setAiInsights] = useState("");
+    const [aiLoading, setAiLoading] = useState(false);
+
+    const generateAIInsights = async () => {
+        if (!data || data.warehouses.length === 0) return;
+        setAiLoading(true);
+        try {
+            const genAI = new GoogleGenerativeAI(process.env.REACT_APP_GEMINI_API_KEY);
+            const model = genAI.getGenerativeModel({ model: "gemini-3.1-flash-lite-preview" });
+            
+            const summaryData = {
+                totalWarehouses: data.warehouses.length,
+                overflowingWarehouses: data.warehouses.filter(w => ((w.current_load + (w.reserved_space || 0)) / (w.max_capacity || 1)) > 0.85).length,
+                totalOrders: data.orders.length,
+                pendingOrders: data.orders.filter(o => o.status === 'Pending').length,
+                totalTrucks: data.fleet.length,
+                activeTrucks: data.fleet.filter(t => t.vehicle_status === true || t.vehicle_status === 'true').length,
+            };
+
+            const prompt = `You are an expert supply chain analyst. Based on this real-time SCMS data: ${JSON.stringify(summaryData)}, provide 3 short, highly actionable bullet points of insights or recommendations. Keep it concise. Focus on operational bottlenecks if any. Format as simple HTML (just <ul> and <li>, no markdown blocks).`;
+            
+            const result = await model.generateContent(prompt);
+            let text = result.response.text();
+            text = text.replace(/```html/g, '').replace(/```/g, ''); 
+            setAiInsights(text);
+        } catch (error) {
+            console.error("Failed to generate AI insights", error);
+            setAiInsights(`<p style='color: #ef4444;'>Failed to load AI insights. Error: ${error.message || error.toString()}</p>`);
+        } finally {
+            setAiLoading(false);
+        }
+    };
 
     const t = (text) => {
         if (!text) return '';
@@ -432,7 +551,7 @@ const AnalyticsPage = () => {
         const spaceKey = rawKey.replace(/_/g, ' ');
         if (translations[spaceKey]) return translations[spaceKey];
 
-        const words = spaceKey.split(/\s+/);
+        const words = spaceKey.split(/\\s+/);
         if (words.length > 1) {
             return words.map(w => translations[w] || w).join(' ');
         }
@@ -444,6 +563,7 @@ const AnalyticsPage = () => {
         if (num === null || num === undefined || isNaN(num)) return '';
         return Number(num).toLocaleString('en-IN');
     };
+    
     useEffect(() => {
         const detectLocale = () => {
             try {
@@ -453,7 +573,6 @@ const AnalyticsPage = () => {
                     lang = cookie.trim().split('=')[1].split('/').pop();
                 }
 
-                // Fallback to html lang attribute if cookie not found or is 'en'
                 if (!lang || lang.toLowerCase() === 'en') {
                     const htmlLang = document.documentElement.lang || document.documentElement.getAttribute('lang');
                     if (htmlLang) {
@@ -463,21 +582,21 @@ const AnalyticsPage = () => {
 
                 if (lang) {
                     const localeMap = {
-                        'hi': 'hi-IN-u-nu-deva',   // Devanagari
-                        'mr': 'mr-IN-u-nu-deva',   // Marathi (Devanagari)
-                        'ta': 'ta-IN-u-nu-tamldec', // Tamil
-                        'te': 'te-IN-u-nu-telu',   // Telugu
-                        'kn': 'kn-IN-u-nu-knda',   // Kannada
-                        'ml': 'ml-IN-u-nu-mlym',   // Malayalam
-                        'bn': 'bn-IN-u-nu-beng',   // Bengali
-                        'gu': 'gu-IN-u-nu-gujr',   // Gujarati
-                        'pa': 'pa-IN-u-nu-guru',   // Gurmukhi (Punjabi)
-                        'or': 'or-IN-u-nu-orya',   // Odia
-                        'ar': 'ar-EG-u-nu-arab',   // Arabic-Indic
-                        'fa': 'fa-IR-u-nu-arabext', // Persian (Extended Arabic-Indic)
-                        'ur': 'ur-PK-u-nu-arabext', // Urdu (Extended Arabic-Indic)
-                        'th': 'th-TH-u-nu-thai',   // Thai
-                        'my': 'my-MM-u-nu-mymr',   // Myanmar/Burmese
+                        'hi': 'hi-IN-u-nu-deva',   
+                        'mr': 'mr-IN-u-nu-deva',   
+                        'ta': 'ta-IN-u-nu-tamldec', 
+                        'te': 'te-IN-u-nu-telu',   
+                        'kn': 'kn-IN-u-nu-knda',   
+                        'ml': 'ml-IN-u-nu-mlym',   
+                        'bn': 'bn-IN-u-nu-beng',   
+                        'gu': 'gu-IN-u-nu-gujr',   
+                        'pa': 'pa-IN-u-nu-guru',   
+                        'or': 'or-IN-u-nu-orya',   
+                        'ar': 'ar-EG-u-nu-arab',   
+                        'fa': 'fa-IR-u-nu-arabext', 
+                        'ur': 'ur-PK-u-nu-arabext', 
+                        'th': 'th-TH-u-nu-thai',   
+                        'my': 'my-MM-u-nu-mymr',   
                         'si': 'si-LK',
                         'zh-CN': 'zh-CN', 'zh-TW': 'zh-TW', 'ja': 'ja-JP',
                         'ko': 'ko-KR', 'ru': 'ru-RU', 'fr': 'fr-FR',
@@ -500,7 +619,6 @@ const AnalyticsPage = () => {
         const fetchAllData = async () => {
             setLoading(true);
 
-            // 1. Warehouses
             let wData = [];
             try {
                 const { data: resData, error } = await supabase.from('warehouses').select('*');
@@ -510,7 +628,6 @@ const AnalyticsPage = () => {
                 console.error('warehouses fetch failed:', err);
             }
 
-            // 2. Warehouse Logs
             let lData = [];
             try {
                 const { data: resData, error } = await supabase.from('warehouse_logs').select('*').order('triggered_at', { ascending: false }).limit(10);
@@ -520,7 +637,6 @@ const AnalyticsPage = () => {
                 console.error('warehouse_logs fetch failed:', err);
             }
 
-            // 3. Truck Reroutes
             let rData = [];
             try {
                 const { data: resData, error } = await supabase.from('truck_reroutes').select('*');
@@ -530,10 +646,8 @@ const AnalyticsPage = () => {
                 console.error('truck_reroutes fetch failed:', err);
             }
 
-            // 4. Fleet
             let fData = [];
             try {
-                // Trying lowercase first, if your table is exactly "Fleet" we log the error
                 const { data: resData, error } = await supabase.from('Fleet').select('*');
                 if (error) throw error;
                 fData = resData || [];
@@ -541,7 +655,6 @@ const AnalyticsPage = () => {
                 console.error('fleet table fetch failed:', err);
             }
 
-            // 5. Orders
             let oData = [];
             try {
                 const { data: resData, error } = await supabase.from('Load').select('*');
@@ -551,7 +664,6 @@ const AnalyticsPage = () => {
                 console.error('load_id table fetch failed:', err);
             }
 
-            // 6. Drivers
             let dData = [];
             try {
                 const { data: resData, error } = await supabase.from('driver').select('*');
@@ -561,7 +673,6 @@ const AnalyticsPage = () => {
                 console.error('drivers fetch failed:', err);
             }
 
-            // 7. Warehouse Stats
             let wsData = [];
             try {
                 const { data: resData, error } = await supabase.from('warehouse').select('*');
@@ -569,6 +680,15 @@ const AnalyticsPage = () => {
                 wsData = resData || [];
             } catch (err) {
                 console.error('warehouse (stats) fetch failed:', err);
+            }
+            
+            let pData = [];
+            try {
+                const { data: resData, error } = await supabase.from('payments').select('*');
+                if (error) throw error;
+                pData = resData || [];
+            } catch (err) {
+                console.error('payments fetch failed:', err);
             }
 
             setData({
@@ -578,7 +698,8 @@ const AnalyticsPage = () => {
                 fleet: fData,
                 orders: oData,
                 drivers: dData,
-                warehouseStats: wsData
+                warehouseStats: wsData,
+                payments: pData
             });
 
             setLoading(false);
@@ -591,9 +712,6 @@ const AnalyticsPage = () => {
         return <KineticLoader message="Loading Analytics..." />;
     }
 
-    // --- Data Processing ---
-
-    // SECTION 1
     const totalWarehouses = data.warehouses.length;
     const overflowingWarehouses = data.warehouses.filter(w => {
         const cap = w.max_capacity || 1;
@@ -607,9 +725,7 @@ const AnalyticsPage = () => {
     ).length;
 
     const totalOrders = data.orders.length;
-    const totalDrivers = data.drivers.length;
 
-    // SECTION 2
     const warehouseCapacityData = data.warehouses.map(w => {
         const fillPercent = Math.round(((w.current_load + (w.reserved_space || 0)) / (w.max_capacity || 1)) * 100);
 
@@ -622,7 +738,6 @@ const AnalyticsPage = () => {
         };
     });
 
-    // SECTION 3
     const orderStatusCounts = data.orders.reduce((acc, order) => {
         const status = order.status ? order.status : 'Pending';
         acc[status] = (acc[status] || 0) + 1;
@@ -633,19 +748,12 @@ const AnalyticsPage = () => {
         name: t(status),
         value: orderStatusCounts[status]
     }));
-    const PIE_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
-
-    // SECTION 4
+    
     const fleetDonutData = [
         { name: t('Active'), value: activeTrucks },
         { name: t('Inactive'), value: totalTrucks - activeTrucks }
     ];
-    const DONUT_COLORS = ['#10b981', '#64748b'];
 
-    // SECTION 5
-    const sortedDrivers = [...data.drivers].sort((a, b) => (b.rating || 0) - (a.rating || 0));
-
-    // SECTION 7
     const ioData = data.warehouseStats.map(w => ({
         name: t(w.warehouse_name || 'Unknown'),
         inbound: Number(w.inbound) || 0,
@@ -653,172 +761,373 @@ const AnalyticsPage = () => {
         onhand: Number(w.onhand) || 0
     }));
 
-    // Reusable styles
-    const cardStyle = {
-        backgroundColor: 'rgba(255, 255, 255, 0.8)',
-        backdropFilter: 'blur(16px)',
-        WebkitBackdropFilter: 'blur(16px)',
-        borderRadius: '12px',
-        padding: '24px',
-        boxShadow: '0 4px 30px rgba(0, 0, 0, 0.05)',
-        border: '1px solid rgba(249, 115, 22, 0.3)'
+    const paymentStatusCounts = { paid: 0, partial: 0, unpaid: 0 };
+    data.orders.forEach(load => {
+      const loadPayments = data.payments.filter(p => p.order_id === load.load_id && p.status === 'success');
+      let totalPaidInINR = loadPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0) / 100;
+
+      if (totalPaidInINR === 0 && load.payment_status === 'paid') {
+        totalPaidInINR = Number(load.buyer_amount) || 0;
+      }
+
+      const balanceDue = Math.max(0, (Number(load.buyer_amount) || 0) - totalPaidInINR);
+      const isFullyPaid = balanceDue <= 0 && (totalPaidInINR > 0 || load.payment_status === 'paid');
+      const isPartiallyPaid = totalPaidInINR > 0 && balanceDue > 0;
+
+      if (isFullyPaid) paymentStatusCounts.paid++;
+      else if (isPartiallyPaid) paymentStatusCounts.partial++;
+      else paymentStatusCounts.unpaid++;
+    });
+    
+    const paymentStatusData = [
+        { name: t('Paid'), value: paymentStatusCounts.paid },
+        { name: t('Partial'), value: paymentStatusCounts.partial },
+        { name: t('Unpaid'), value: paymentStatusCounts.unpaid }
+    ].filter(item => item.value > 0);
+
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    
+    const rerouteDates = data.reroutes.reduce((acc, reroute) => {
+        if (!reroute.created_at) return acc;
+        const date = new Date(reroute.created_at);
+        if (date >= thirtyDaysAgo) {
+            const dateStr = date.toISOString().split('T')[0];
+            acc[dateStr] = (acc[dateStr] || 0) + 1;
+        }
+        return acc;
+    }, {});
+    
+    const rerouteFrequencyData = Object.keys(rerouteDates).sort().map(date => ({
+        date: date,
+        count: rerouteDates[date]
+    }));
+
+    const routeCounts = data.orders.reduce((acc, order) => {
+        if (order.pickup && order.drop) {
+            const route = `${order.pickup.split(',')[0]} → ${order.drop.split(',')[0]}`;
+            acc[route] = (acc[route] || 0) + 1;
+        }
+        return acc;
+    }, {});
+
+    const topRoutesData = Object.keys(routeCounts)
+        .map(route => ({ route, orders: routeCounts[route] }))
+        .sort((a, b) => b.orders - a.orders)
+        .slice(0, 5);
+
+    let deliveredOrders = 0;
+    let onTimeDeliveries = 0;
+    
+    data.orders.forEach(order => {
+        if (order.status?.toLowerCase() === 'delivered') {
+            deliveredOrders++;
+            const deliveryTime = order.actual_delivery_time ? new Date(order.actual_delivery_time) : new Date(order.updated_at || order.created_at);
+            const etaTime = order.eta ? new Date(order.eta) : null;
+            
+            if (!etaTime || deliveryTime <= etaTime) {
+                onTimeDeliveries++;
+            }
+        }
+    });
+    
+    const onTimeRate = deliveredOrders > 0 ? Math.round((onTimeDeliveries / deliveredOrders) * 100) : null;
+
+    const kpiCards = [
+        { label: 'Total Warehouses', value: data.warehouses.length > 0 ? formatNumber(totalWarehouses) : '-', color: 'var(--accent)', soft: 'var(--accent-bg)', Icon: Warehouse },
+        { label: 'Overflowing', value: data.warehouses.length > 0 ? formatNumber(overflowingWarehouses) : '-', color: overflowingWarehouses > 0 ? 'var(--danger, #ef4444)' : 'var(--accent)', soft: overflowingWarehouses > 0 ? 'rgba(239, 68, 68, 0.15)' : 'var(--accent-bg)', Icon: AlertTriangle },
+        { label: 'Total Trucks', value: data.fleet.length > 0 ? formatNumber(totalTrucks) : '-', color: 'var(--accent)', soft: 'var(--accent-bg)', Icon: Truck },
+        { label: 'Active Trucks', value: data.fleet.length > 0 ? formatNumber(activeTrucks) : '-', color: 'var(--text-primary)', soft: 'var(--bg-inset)', Icon: Activity },
+        { label: 'Total Orders', value: data.orders.length > 0 ? formatNumber(totalOrders) : '-', color: 'var(--accent)', soft: 'var(--accent-bg)', Icon: PackageCheck },
+        { label: 'On-Time Rate', value: onTimeRate !== null ? `${formatNumber(onTimeRate)}%` : '-', color: 'var(--text-secondary)', soft: 'var(--bg-inset)', Icon: Timer }
+    ];
+
+    const chartShellStyle = {
+        width: '100%',
+        height: 320,
+        borderRadius: '10px',
+        background: 'transparent',
+        padding: '10px',
+        boxSizing: 'border-box'
     };
 
-    const titleStyle = { margin: '0 0 16px 0', fontSize: '1.1rem', color: '#f97316', fontWeight: '600', textTransform: 'uppercase' };
-    const emptyStateStyle = { display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%', color: '#64748b', fontStyle: 'italic', minHeight: '200px' };
+    const cardStyle = {
+        background: 'var(--bg-card)',
+        backdropFilter: 'blur(24px)',
+        WebkitBackdropFilter: 'blur(24px)',
+        borderRadius: '24px',
+        padding: '24px',
+        boxShadow: '0 10px 30px -10px rgba(0, 0, 0, 0.5)',
+        border: '1px solid var(--border-color)',
+        transition: 'all 0.3s ease',
+        color: 'var(--text-primary)'
+    };
 
-    // Removed unused getStatusText
+    const glowCardStyle = {
+        ...cardStyle,
+        border: '1px solid rgba(255, 107, 0, 0.4)',
+        boxShadow: '0 0 15px rgba(255, 107, 0, 0.15), inset 0 0 10px rgba(255, 107, 0, 0.05)'
+    };
+
+    const titleStyle = { margin: '0 0 16px 0', fontSize: '1.2rem', color: 'var(--text-primary)', fontWeight: 'bold', letterSpacing: '0.01em' };
+    const emptyStateStyle = { display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%', color: 'var(--text-secondary, #e2bfb0)', fontStyle: 'italic', minHeight: '220px' };
 
     return (
-        <div style={{ padding: '24px', backgroundColor: 'transparent', minHeight: '100vh', color: '#1e293b', boxSizing: 'border-box' }}>
-            <h1 style={{ margin: '0 0 24px 0', color: '#f97316', textTransform: 'uppercase' }}>SCMS Analytics</h1>
-
-            {/* SECTION 1: Top KPI Cards */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '20px', marginBottom: '24px' }}>
-                <div style={cardStyle}>
-                    <p style={{ margin: 0, color: '#64748b', fontSize: '0.9rem' }}>Total Warehouses</p>
-                    <h2 style={{ margin: '8px 0 0 0', fontSize: '2rem', color: '#1e293b' }}>{data.warehouses.length > 0 ? formatNumber(totalWarehouses) : '-'}</h2>
-                </div>
-                <div style={cardStyle}>
-                    <p style={{ margin: 0, color: '#64748b', fontSize: '0.9rem' }}>Overflowing Warehouses</p>
-                    <h2 style={{ margin: '8px 0 0 0', fontSize: '2rem', color: overflowingWarehouses > 0 ? '#ef4444' : '#1e293b' }}>{data.warehouses.length > 0 ? formatNumber(overflowingWarehouses) : '-'}</h2>
-                </div>
-                <div style={cardStyle}>
-                    <p style={{ margin: 0, color: '#64748b', fontSize: '0.9rem' }}>Total Trucks</p>
-                    <h2 style={{ margin: '8px 0 0 0', fontSize: '2rem', color: '#1e293b' }}>{data.fleet.length > 0 ? formatNumber(totalTrucks) : '-'}</h2>
-                </div>
-                <div style={cardStyle}>
-                    <p style={{ margin: 0, color: '#64748b', fontSize: '0.9rem' }}>Active Trucks</p>
-                    <h2 style={{ margin: '8px 0 0 0', fontSize: '2rem', color: '#10b981' }}>{data.fleet.length > 0 ? formatNumber(activeTrucks) : '-'}</h2>
-                </div>
-                <div style={cardStyle}>
-                    <p style={{ margin: 0, color: '#64748b', fontSize: '0.9rem' }}>Total Orders</p>
-                    <h2 style={{ margin: '8px 0 0 0', fontSize: '2rem', color: '#1e293b' }}>{data.orders.length > 0 ? formatNumber(totalOrders) : '-'}</h2>
-                </div>
-                <div style={cardStyle}>
-                    <p style={{ margin: 0, color: '#64748b', fontSize: '0.9rem' }}>Total Drivers</p>
-                    <h2 style={{ margin: '8px 0 0 0', fontSize: '2rem', color: '#1e293b' }}>{data.drivers.length > 0 ? formatNumber(totalDrivers) : '-'}</h2>
-                </div>
-            </div>
-
-            {/* Middle Row Charts */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(450px, 1fr))', gap: '24px', marginBottom: '24px' }}>
-
-                {/* SECTION 2: Warehouse Capacity */}
-                <div style={cardStyle}>
-                    <h3 style={titleStyle}>Warehouse Capacity (%)</h3>
-                    <div style={{ width: '100%', height: 300 }} className="notranslate">
-                        {warehouseCapacityData.length > 0 ? (
-                            <ResponsiveContainer>
-                                <AnimatedChart>
-                                    <BarChart data={warehouseCapacityData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                                        <defs>
-                                            <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
-                                                <feDropShadow dx="0" dy="4" stdDeviation="4" floodColor="#000" floodOpacity="0.1" />
-                                                <feGaussianBlur stdDeviation="2" result="blur" />
-                                                <feComposite in="SourceGraphic" in2="blur" operator="over" />
-                                            </filter>
-                                            <linearGradient id="colorGreen" x1="0" y1="0" x2="0" y2="1">
-                                                <stop offset="0%" stopColor="#86efac" stopOpacity={1} />
-                                                <stop offset="40%" stopColor="#22c55e" stopOpacity={0.9} />
-                                                <stop offset="100%" stopColor="#15803d" stopOpacity={0.8} />
-                                            </linearGradient>
-                                            <linearGradient id="colorOrange" x1="0" y1="0" x2="0" y2="1">
-                                                <stop offset="0%" stopColor="#fde047" stopOpacity={1} />
-                                                <stop offset="40%" stopColor="#f97316" stopOpacity={0.9} />
-                                                <stop offset="100%" stopColor="#c2410c" stopOpacity={0.8} />
-                                            </linearGradient>
-                                            <linearGradient id="colorRed" x1="0" y1="0" x2="0" y2="1">
-                                                <stop offset="0%" stopColor="#fca5a5" stopOpacity={1} />
-                                                <stop offset="40%" stopColor="#ef4444" stopOpacity={0.9} />
-                                                <stop offset="100%" stopColor="#b91c1c" stopOpacity={0.8} />
-                                            </linearGradient>
-                                        </defs>
-                                        <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
-                                        <XAxis dataKey="name" stroke="#64748b" fontSize={12} tickFormatter={(val) => val.split(' ')[0]} />
-                                        <YAxis stroke="#64748b" fontSize={12} tickFormatter={(val) => formatNumber(val)} />
-                                        <Tooltip
-                                            contentStyle={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '8px', color: '#1e293b' }}
-                                            formatter={(value, name, props) => [`${formatNumber(value)}% (${formatNumber(props.payload.current_load)}/${formatNumber(props.payload.max_capacity)})`, t('Filled')]}
-                                        />
-                                        <Bar dataKey="fillPercent" radius={[6, 6, 0, 0]} isAnimationActive={true} animationDuration={1200} filter="url(#glow)">
-                                            {warehouseCapacityData.map((entry, index) => (
-                                                <Cell key={`cell-${index}`} fill={`url(#${entry.colorId})`} />
-                                            ))}
-                                        </Bar>
-                                    </BarChart>
-                                </AnimatedChart>
-                            </ResponsiveContainer>
-                        ) : (
-                            <div style={emptyStateStyle}>No data available</div>
-                        )}
+        <div style={{ position: 'relative', padding: '28px', backgroundColor: 'var(--analytics-bg, transparent)', minHeight: '100vh', color: 'var(--text-primary)', boxSizing: 'border-box', overflowX: 'hidden', fontFamily: "'Inter', sans-serif" }}>
+            <BackgroundShader />
+            
+            <style>{`
+                @keyframes fadeInUp {
+                    from { opacity: 0; transform: translateY(20px); }
+                    to { opacity: 1; transform: translateY(0); }
+                }
+                .animate-fade-in-up {
+                    animation: fadeInUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+                }
+                .glass-card-hover:hover {
+                    background: rgba(255, 255, 255, 0.05) !important;
+                    border-color: rgba(255, 182, 147, 0.3) !important;
+                }
+            `}</style>
+            
+            <div style={{ position: 'relative', zIndex: 10 }}>
+                <div style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    marginBottom: '32px',
+                    padding: '24px',
+                    borderRadius: '24px',
+                    background: 'var(--bg-card)',
+                    backdropFilter: 'blur(24px)',
+                    WebkitBackdropFilter: 'blur(24px)',
+                    border: '1px solid var(--border-color)',
+                    boxShadow: '0 10px 30px -10px rgba(0, 0, 0, 0.5)'
+                }} className="animate-fade-in-up">
+                    <div>
+                        <h1 style={{ margin: 0, color: 'var(--text-primary)', textTransform: 'uppercase', fontSize: '2rem', fontWeight: '900', letterSpacing: '-0.02em' }}>IGNIS Control</h1>
+                        <p style={{ margin: '8px 0 0 0', color: 'var(--text-secondary, #e2bfb0)', fontSize: '1rem' }}>Global Operations & Analytics Dashboard</p>
                     </div>
+                    <button 
+                        onClick={generateAIInsights}
+                        disabled={aiLoading}
+                        style={{
+                            padding: '12px 24px',
+                            background: 'linear-gradient(90deg, #ff6b00, #ffb77f)',
+                            color: '#351000',
+                            border: 'none',
+                            borderRadius: '12px',
+                            fontWeight: 800,
+                            cursor: aiLoading ? 'not-allowed' : 'pointer',
+                            boxShadow: '0 0 20px rgba(255, 182, 147, 0.2)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '8px',
+                            transition: 'transform 0.2s ease',
+                            transform: aiLoading ? 'scale(0.95)' : 'scale(1)'
+                        }}
+                    >
+                        <Flame size={18} strokeWidth={2.5} />
+                        {aiLoading ? 'Analyzing...' : 'Command Pulse'}
+                    </button>
                 </div>
 
-                {/* SECTION 7: Inbound vs Outbound */}
-                <div style={cardStyle}>
-                    <h3 style={titleStyle}>Inbound vs Outbound Volume</h3>
-                    <div style={{ width: '100%', height: 300 }} className="notranslate">
-                        {ioData.length > 0 ? (
-                            <ResponsiveContainer>
-                                <AnimatedChart>
-                                    <BarChart data={ioData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                                        <defs>
-                                            <filter id="glowInOut" x="-20%" y="-20%" width="140%" height="140%">
-                                                <feDropShadow dx="0" dy="4" stdDeviation="4" floodColor="#000" floodOpacity="0.1" />
-                                                <feGaussianBlur stdDeviation="2" result="blur" />
-                                                <feComposite in="SourceGraphic" in2="blur" operator="over" />
-                                            </filter>
-                                            <linearGradient id="colorInbound" x1="0" y1="0" x2="0" y2="1">
-                                                <stop offset="0%" stopColor="#93c5fd" stopOpacity={1} />
-                                                <stop offset="40%" stopColor="#3b82f6" stopOpacity={0.9} />
-                                                <stop offset="100%" stopColor="#1d4ed8" stopOpacity={0.8} />
-                                            </linearGradient>
-                                            <linearGradient id="colorOutbound" x1="0" y1="0" x2="0" y2="1">
-                                                <stop offset="0%" stopColor="#fde047" stopOpacity={1} />
-                                                <stop offset="40%" stopColor="#f97316" stopOpacity={0.9} />
-                                                <stop offset="100%" stopColor="#c2410c" stopOpacity={0.8} />
-                                            </linearGradient>
-                                        </defs>
-                                        <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
-                                        <XAxis dataKey="name" stroke="#64748b" fontSize={12} tickFormatter={(val) => val?.split(' ')[0] || val} />
-                                        <YAxis stroke="#64748b" fontSize={12} tickFormatter={(val) => formatNumber(val)} />
-                                        <Tooltip
-                                            contentStyle={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '8px', color: '#1e293b' }}
-                                            formatter={(value, name, props) => [`${formatNumber(value)} (${t('On hand')}: ${formatNumber(props.payload.onhand)})`, name]}
-                                        />
-                                        <Legend wrapperStyle={{ fontSize: '12px', color: '#64748b' }} />
-                                        <Bar dataKey="inbound" name={t('Inbound')} fill="url(#colorInbound)" radius={[4, 4, 0, 0]} isAnimationActive={true} animationDuration={1200} filter="url(#glowInOut)" />
-                                        <Bar dataKey="outbound" name={t('Outbound')} fill="url(#colorOutbound)" radius={[4, 4, 0, 0]} isAnimationActive={true} animationDuration={1200} filter="url(#glowInOut)" />
-                                    </BarChart>
-                                </AnimatedChart>
-                            </ResponsiveContainer>
-                        ) : (
-                            <div style={emptyStateStyle}>No data available</div>
-                        )}
+                {/* AI Insights Panel */}
+                {aiInsights && (
+                    <div style={{ ...glowCardStyle, marginBottom: '32px', animationDelay: '0.1s' }} className="animate-fade-in-up">
+                        <h3 style={{ margin: '0 0 16px 0', fontSize: '1.2rem', color: '#ff6b00', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <Flame size={20} strokeWidth={2.5} /> System Pulse Diagnostics
+                        </h3>
+                        <div style={{ color: 'var(--text-primary)', fontSize: '1rem', lineHeight: '1.6' }} dangerouslySetInnerHTML={{ __html: aiInsights }} />
                     </div>
+                )}
+
+                {/* SECTION 1: Top KPI Cards */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: '24px', marginBottom: '32px' }}>
+                    {kpiCards.map(({ label, value, color, soft, Icon }, idx) => (
+                        <div key={label} style={{ ...cardStyle, padding: '24px', animationDelay: `${0.2 + (idx * 0.05)}s` }} className="glass-card-hover animate-fade-in-up">
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                                <div>
+                                    <p style={{ margin: '0 0 4px 0', color: 'var(--text-secondary)', fontSize: '0.75rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{label}</p>
+                                    <h2 style={{ margin: '12px 0 0 0', fontSize: '2.5rem', lineHeight: 1, color: color, fontWeight: '800' }}>{value}</h2>
+                                </div>
+                                <div style={{ width: '42px', height: '42px', borderRadius: '12px', backgroundColor: soft, color, display: 'grid', placeItems: 'center', flex: '0 0 auto', border: `1px solid ${color}40` }}>
+                                    <Icon size={22} strokeWidth={2.4} />
+                                </div>
+                            </div>
+                        </div>
+                    ))}
                 </div>
-            </div>
 
-            {/* Bottom Grid */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))', gap: '24px' }}>
+                {/* Middle Row Charts */}
+                <div className="analytics-chart-grid">
 
-                {/* SECTION 3 & 4: Pie/Donut Charts Container */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-                    <div style={cardStyle}>
+                    {/* SECTION 2: Warehouse Capacity */}
+                    <div style={{...cardStyle, animationDelay: '0.5s'}} className="glass-card-hover animate-fade-in-up">
+                        <h3 style={titleStyle}>Warehouse Capacity</h3>
+                        <div style={chartShellStyle} className="notranslate">
+                            {warehouseCapacityData.length > 0 ? (
+                                <ResponsiveContainer>
+                                    <AnimatedChart>
+                                        <BarChart data={warehouseCapacityData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                                            <defs>
+                                                <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+                                                    <feDropShadow dx="0" dy="4" stdDeviation="4" floodColor="#ff6b00" floodOpacity="0.3" />
+                                                </filter>
+                                                <linearGradient id="colorGreen" x1="0" y1="0" x2="0" y2="1">
+                                                    <stop offset="0%" stopColor="#86efac" stopOpacity={1} />
+                                                    <stop offset="100%" stopColor="#22c55e" stopOpacity={0.8} />
+                                                </linearGradient>
+                                                <linearGradient id="colorOrange" x1="0" y1="0" x2="0" y2="1">
+                                                    <stop offset="0%" stopColor="#ffb693" stopOpacity={1} />
+                                                    <stop offset="100%" stopColor="#ff6b00" stopOpacity={0.8} />
+                                                </linearGradient>
+                                                <linearGradient id="colorRed" x1="0" y1="0" x2="0" y2="1">
+                                                    <stop offset="0%" stopColor="#ffb4ab" stopOpacity={1} />
+                                                    <stop offset="100%" stopColor="#ff6b00" stopOpacity={0.8} />
+                                                </linearGradient>
+                                            </defs>
+                                            <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" vertical={false} />
+                                            <XAxis dataKey="name" stroke="var(--text-secondary)" fontSize={12} tickFormatter={(val) => val.split(' ')[0]} />
+                                            <YAxis stroke="var(--text-secondary)" fontSize={12} tickFormatter={(val) => formatNumber(val)} />
+                                            <Tooltip
+                                                contentStyle={{ backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border-color)', borderRadius: '12px', color: 'var(--text-primary)', backdropFilter: 'blur(8px)' }}
+                                                formatter={(value, name, props) => [`${formatNumber(value)}% (${formatNumber(props.payload.current_load)}/${formatNumber(props.payload.max_capacity)})`, t('Filled')]}
+                                            />
+                                            <Bar dataKey="fillPercent" radius={[6, 6, 0, 0]} isAnimationActive={true} animationDuration={1200} filter="url(#glow)">
+                                                {warehouseCapacityData.map((entry, index) => (
+                                                    <Cell key={`cell-${index}`} fill={`url(#${entry.colorId})`} />
+                                                ))}
+                                            </Bar>
+                                        </BarChart>
+                                    </AnimatedChart>
+                                </ResponsiveContainer>
+                            ) : (
+                                <div style={emptyStateStyle}>No data available</div>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* NEW SECTION: Top Busiest Routes */}
+                    <div style={{...cardStyle, animationDelay: '0.55s'}} className="glass-card-hover animate-fade-in-up">
+                        <h3 style={titleStyle}>Top 5 Busiest Routes</h3>
+                        <div style={chartShellStyle} className="notranslate">
+                            {topRoutesData.length > 0 ? (
+                                <ResponsiveContainer>
+                                    <AnimatedChart>
+                                        <BarChart data={topRoutesData} layout="vertical" margin={{ top: 10, right: 30, left: 40, bottom: 0 }}>
+                                            <defs>
+                                                <linearGradient id="colorRoutes" x1="0" y1="0" x2="1" y2="0">
+                                                    <stop offset="0%" stopColor="#ffb961" stopOpacity={0.8} />
+                                                    <stop offset="100%" stopColor="#ff6b00" stopOpacity={1} />
+                                                </linearGradient>
+                                            </defs>
+                                            <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" horizontal={false} />
+                                            <XAxis type="number" stroke="var(--text-secondary)" fontSize={12} allowDecimals={false} />
+                                            <YAxis dataKey="route" type="category" stroke="var(--text-secondary)" fontSize={10} width={120} tick={{ fill: 'var(--text-primary)' }} />
+                                            <Tooltip
+                                                contentStyle={{ backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border-color)', borderRadius: '12px', color: 'var(--text-primary)', backdropFilter: 'blur(8px)' }}
+                                                formatter={(value) => [formatNumber(value), 'Orders']}
+                                            />
+                                            <Bar dataKey="orders" fill="url(#colorRoutes)" radius={[0, 4, 4, 0]} isAnimationActive={true} animationDuration={1200}>
+                                                {topRoutesData.map((entry, index) => (
+                                                    <Cell key={`cell-${index}`} fill={`url(#colorRoutes)`} />
+                                                ))}
+                                            </Bar>
+                                        </BarChart>
+                                    </AnimatedChart>
+                                </ResponsiveContainer>
+                            ) : (
+                                <div style={emptyStateStyle}>No route data available</div>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* SECTION 7: Inbound vs Outbound */}
+                    <div style={{...cardStyle, animationDelay: '0.6s'}} className="glass-card-hover animate-fade-in-up">
+                        <h3 style={titleStyle}>Inbound vs Outbound Volume</h3>
+                        <div style={chartShellStyle} className="notranslate">
+                            {ioData.length > 0 ? (
+                                <ResponsiveContainer>
+                                    <AnimatedChart>
+                                        <BarChart data={ioData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                                            <defs>
+                                                <filter id="glowInOut" x="-20%" y="-20%" width="140%" height="140%">
+                                                    <feDropShadow dx="0" dy="4" stdDeviation="4" floodColor="#ff6b00" floodOpacity="0.2" />
+                                                </filter>
+                                                <linearGradient id="colorInbound" x1="0" y1="0" x2="0" y2="1">
+                                                    <stop offset="0%" stopColor="#ffddb9" stopOpacity={1} />
+                                                    <stop offset="100%" stopColor="#ffb961" stopOpacity={0.8} />
+                                                </linearGradient>
+                                                <linearGradient id="colorOutbound" x1="0" y1="0" x2="0" y2="1">
+                                                    <stop offset="0%" stopColor="#ffb77f" stopOpacity={1} />
+                                                    <stop offset="100%" stopColor="#ff6b00" stopOpacity={0.8} />
+                                                </linearGradient>
+                                            </defs>
+                                            <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" vertical={false} />
+                                            <XAxis dataKey="name" stroke="var(--text-secondary)" fontSize={12} tickFormatter={(val) => val?.split(' ')[0] || val} />
+                                            <YAxis stroke="var(--text-secondary)" fontSize={12} tickFormatter={(val) => formatNumber(val)} />
+                                            <Tooltip
+                                                contentStyle={{ backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border-color)', borderRadius: '12px', color: 'var(--text-primary)', backdropFilter: 'blur(8px)' }}
+                                                formatter={(value, name, props) => [`${formatNumber(value)} (${t('On hand')}: ${formatNumber(props.payload.onhand)})`, name]}
+                                            />
+                                            <Legend wrapperStyle={{ fontSize: '12px', color: 'var(--text-secondary)' }} />
+                                            <Bar dataKey="inbound" name={t('Inbound')} fill="url(#colorInbound)" radius={[4, 4, 0, 0]} isAnimationActive={true} animationDuration={1200} filter="url(#glowInOut)" />
+                                            <Bar dataKey="outbound" name={t('Outbound')} fill="url(#colorOutbound)" radius={[4, 4, 0, 0]} isAnimationActive={true} animationDuration={1200} filter="url(#glowInOut)" />
+                                        </BarChart>
+                                    </AnimatedChart>
+                                </ResponsiveContainer>
+                            ) : (
+                                <div style={emptyStateStyle}>No data available</div>
+                            )}
+                        </div>
+                    </div>
+                    
+                    {/* NEW SECTION: Reroute Frequency */}
+                    <div style={{...cardStyle, animationDelay: '0.65s'}} className="glass-card-hover animate-fade-in-up">
+                        <h3 style={{ ...titleStyle, display: 'flex', alignItems: 'center', gap: '8px' }}><Route size={18} /> Reroute Frequency (30D)</h3>
+                        <div style={chartShellStyle} className="notranslate">
+                            {rerouteFrequencyData.length > 0 ? (
+                                <ResponsiveContainer>
+                                    <AnimatedChart>
+                                        <AreaChart data={rerouteFrequencyData} margin={{ top: 10, right: 12, left: -20, bottom: 0 }}>
+                                            <defs>
+                                                <linearGradient id="colorRerouteArea" x1="0" y1="0" x2="0" y2="1">
+                                                    <stop offset="0%" stopColor="#ff6b00" stopOpacity={0.4} />
+                                                    <stop offset="100%" stopColor="#ff6b00" stopOpacity={0.0} />
+                                                </linearGradient>
+                                            </defs>
+                                            <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" vertical={false} />
+                                            <XAxis dataKey="date" stroke="var(--text-secondary)" fontSize={10} tickFormatter={(val) => val.slice(5)} />
+                                            <YAxis stroke="var(--text-secondary)" fontSize={12} allowDecimals={false} />
+                                            <Tooltip
+                                                contentStyle={{ backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border-color)', borderRadius: '12px', color: 'var(--text-primary)', backdropFilter: 'blur(8px)' }}
+                                                formatter={(value) => [formatNumber(value), 'Reroutes']}
+                                            />
+                                            <Area type="monotone" dataKey="count" stroke="#ffb693" strokeWidth={3} fill="url(#colorRerouteArea)" dot={{ r: 4, fill: '#ff6b00', strokeWidth: 2, stroke: '#0f131d' }} isAnimationActive={true} animationDuration={1200} />
+                                        </AreaChart>
+                                    </AnimatedChart>
+                                </ResponsiveContainer>
+                            ) : (
+                                <div style={emptyStateStyle}>No reroutes in the last 30 days</div>
+                            )}
+                        </div>
+                    </div>
+                    {/* SECTION 3: Order Status */}
+                    <div style={{...cardStyle, animationDelay: '0.7s'}} className="glass-card-hover animate-fade-in-up">
                         <h3 style={titleStyle}>Order Status Distribution</h3>
-                        <div style={{ width: '100%', height: 250 }} className="notranslate">
+                        <div style={{ ...chartShellStyle, height: 280 }} className="notranslate">
                             {orderStatusData.length > 0 ? (
                                 <ResponsiveContainer>
                                     <AnimatedChart>
                                         <PieChart>
-                                            <Pie data={orderStatusData} cx="50%" cy="50%" outerRadius={80} dataKey="value" label={({ name, percent }) => `${name} ${formatNumber(Math.round(percent * 100))}%`} isAnimationActive={true} animationDuration={1200}>
+                                            <Pie data={orderStatusData} cx="50%" cy="50%" innerRadius={54} outerRadius={94} paddingAngle={4} dataKey="value" label={({ name, percent }) => `${name} ${formatNumber(Math.round(percent * 100))}%`} isAnimationActive={true} animationDuration={1200} stroke="rgba(0,0,0,0.2)">
                                                 {orderStatusData.map((entry, index) => (
-                                                    <Cell key={`cell-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
+                                                    <Cell key={`cell-${index}`} fill={['#ff6b00', '#ffb693', '#ffb961', '#ffb4ab', '#e2bfb0'][index % 5]} />
                                                 ))}
                                             </Pie>
                                             <Tooltip
-                                                contentStyle={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '8px', color: '#1e293b' }}
+                                                contentStyle={{ backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border-color)', borderRadius: '12px', color: 'var(--text-primary)', backdropFilter: 'blur(8px)' }}
                                                 formatter={(value) => [formatNumber(value)]}
                                             />
                                         </PieChart>
@@ -830,23 +1139,50 @@ const AnalyticsPage = () => {
                         </div>
                     </div>
 
-                    <div style={cardStyle}>
+                    {/* SECTION: Payment Collection */}
+                    <div style={{...cardStyle, animationDelay: '0.75s'}} className="glass-card-hover animate-fade-in-up">
+                        <h3 style={titleStyle}>Payment Collection Status</h3>
+                        <div style={{ ...chartShellStyle, height: 280 }} className="notranslate">
+                            {paymentStatusData.length > 0 ? (
+                                <ResponsiveContainer>
+                                    <AnimatedChart>
+                                        <PieChart>
+                                            <Pie data={paymentStatusData} cx="50%" cy="50%" innerRadius={60} outerRadius={94} paddingAngle={4} dataKey="value" label={({ name, percent }) => `${name} ${formatNumber(Math.round(percent * 100))}%`} isAnimationActive={true} animationDuration={1200} stroke="rgba(0,0,0,0.2)">
+                                                {paymentStatusData.map((entry, index) => (
+                                                    <Cell key={`cell-${index}`} fill={['#86efac', '#ffb961', '#ffb4ab'][index % 3]} />
+                                                ))}
+                                            </Pie>
+                                            <Tooltip
+                                                contentStyle={{ backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border-color)', borderRadius: '12px', color: 'var(--text-primary)', backdropFilter: 'blur(8px)' }}
+                                                formatter={(value, name) => [formatNumber(value), name]}
+                                            />
+                                        </PieChart>
+                                    </AnimatedChart>
+                                </ResponsiveContainer>
+                            ) : (
+                                <div style={emptyStateStyle}>No payment data available</div>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* SECTION: Fleet Status */}
+                    <div style={{...cardStyle, animationDelay: '0.8s'}} className="glass-card-hover animate-fade-in-up">
                         <h3 style={titleStyle}>Fleet Status</h3>
-                        <div style={{ width: '100%', height: 250 }} className="notranslate">
+                        <div style={{ ...chartShellStyle, height: 280 }} className="notranslate">
                             {data.fleet.length > 0 ? (
                                 <ResponsiveContainer>
                                     <AnimatedChart>
                                         <PieChart>
-                                            <Pie data={fleetDonutData} cx="50%" cy="50%" innerRadius={60} outerRadius={80} dataKey="value" label={({ name, percent }) => `${name} ${formatNumber(Math.round(percent * 100))}%`} isAnimationActive={true} animationDuration={1200}>
+                                            <Pie data={fleetDonutData} cx="50%" cy="50%" innerRadius={64} outerRadius={94} paddingAngle={5} dataKey="value" label={({ name, percent }) => `${name} ${formatNumber(Math.round(percent * 100))}%`} isAnimationActive={true} animationDuration={1200} stroke="rgba(0,0,0,0.2)">
                                                 {fleetDonutData.map((entry, index) => (
-                                                    <Cell key={`cell-${index}`} fill={DONUT_COLORS[index % DONUT_COLORS.length]} />
+                                                    <Cell key={`cell-${index}`} fill={['#ff6b00', 'var(--border-color)'][index % 2]} />
                                                 ))}
                                             </Pie>
                                             <Tooltip
-                                                contentStyle={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '8px', color: '#1e293b' }}
+                                                contentStyle={{ backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border-color)', borderRadius: '12px', color: 'var(--text-primary)', backdropFilter: 'blur(8px)' }}
                                                 formatter={(value, name) => [formatNumber(value), name]}
                                             />
-                                            <text x="50%" y="50%" textAnchor="middle" dominantBaseline="middle" fill="#1e293b" fontSize={24} fontWeight="bold">
+                                            <text x="50%" y="50%" textAnchor="middle" dominantBaseline="middle" fill="var(--text-primary)" fontSize={26} fontWeight="bold">
                                                 {formatNumber(Math.round((activeTrucks / (totalTrucks || 1)) * 100))}%
                                             </text>
                                         </PieChart>
@@ -856,93 +1192,6 @@ const AnalyticsPage = () => {
                                 <div style={emptyStateStyle}>No data available</div>
                             )}
                         </div>
-                    </div>
-                </div>
-
-                {/* SECTION 5: Driver Performance */}
-                <div style={cardStyle}>
-                    <h3 style={titleStyle}>Driver Performance Ranking</h3>
-                    {sortedDrivers.length > 0 ? (
-                        <div style={{ overflowX: 'auto' }}>
-                            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.9rem' }}>
-                                <thead>
-                                    <tr style={{ borderBottom: '1px solid #e2e8f0', color: '#64748b' }}>
-                                        <th style={{ padding: '12px 8px' }}>Driver Name</th>
-                                        <th style={{ padding: '12px 8px' }}>Rating</th>
-                                        <th style={{ padding: '12px 8px' }}>Status</th>
-                                        <th style={{ padding: '12px 8px' }}>Last Trip</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {sortedDrivers.slice(0, 8).map(driver => (
-                                        <tr key={driver.driver_id || driver.id || Math.random()} style={{ borderBottom: '1px solid #e2e8f0' }}>
-                                            <td style={{ padding: '12px 8px', color: '#1e293b', fontWeight: '500' }}>{driver.name}</td>
-                                            <td style={{ padding: '12px 8px', color: '#f59e0b' }}>
-                                                {'★'.repeat(Math.floor(driver.rating || 0))}
-                                                <span style={{ color: '#cbd5e1' }}>{'★'.repeat(5 - Math.floor(driver.rating || 0))}</span>
-                                                <span style={{ marginLeft: '4px', color: '#64748b' }}>{formatNumber(driver.rating)}</span>
-                                            </td>
-                                            <td style={{ padding: '12px 8px' }}>
-                                                <span style={{
-                                                    padding: '4px 8px', borderRadius: '12px', fontSize: '0.8rem',
-                                                    backgroundColor: driver.status?.toLowerCase() === 'active' ? '#dbeafe' : '#f1f5f9',
-                                                    color: driver.status?.toLowerCase() === 'active' ? '#2563eb' : '#64748b'
-                                                }}>
-                                                    {driver.status || 'Offline'}
-                                                </span>
-                                            </td>
-                                            <td style={{ padding: '12px 8px', color: '#64748b' }}>{driver.last_trip || 'N/A'}</td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
-                    ) : (
-                        <div style={emptyStateStyle}>No data available</div>
-                    )}
-                </div>
-
-                {/* SECTION 6: Warehouse Events Timeline */}
-                <div style={cardStyle}>
-                    <h3 style={titleStyle}>Warehouse Events Log</h3>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                        {data.logs.length > 0 ? data.logs.map(log => {
-                            let badgeColor = '#10b981'; // restored = green
-                            let bgColor = '#d1fae5';
-
-                            if (log.event_type === 'overflow') {
-                                badgeColor = '#ef4444'; bgColor = '#fee2e2';
-                            } else if (log.event_type === 'reroute') {
-                                badgeColor = '#f59e0b'; bgColor = '#fef3c7';
-                            }
-
-                            // Calculate time ago safely
-                            let timeStr = 'Just now';
-                            if (log.triggered_at) {
-                                const minutesAgo = Math.floor((new Date() - new Date(log.triggered_at)) / 60000);
-                                timeStr = minutesAgo < 60 ? formatNumber(minutesAgo) + ' mins ago' : formatNumber(Math.floor(minutesAgo / 60)) + ' hours ago';
-                            }
-
-                            return (
-                                <div key={log.id || Math.random()} style={{ display: 'flex', gap: '12px', borderLeft: `2px solid ${badgeColor}`, paddingLeft: '12px' }}>
-                                    <div style={{ flex: 1 }}>
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-                                            <span style={{
-                                                backgroundColor: bgColor, color: badgeColor, fontSize: '0.75rem',
-                                                padding: '2px 8px', borderRadius: '12px', fontWeight: 'bold',
-                                                textTransform: 'uppercase'
-                                            }}>
-                                                {log.event_type || 'Event'}
-                                            </span>
-                                            <span style={{ color: '#64748b', fontSize: '0.8rem' }}>{timeStr}</span>
-                                        </div>
-                                        <p style={{ margin: '0 0 4px 0', color: '#1e293b', fontSize: '0.9rem', fontWeight: '500' }}>{log.message || 'Unknown event occurred.'}</p>
-                                    </div>
-                                </div>
-                            );
-                        }) : (
-                            <div style={emptyStateStyle}>No data available</div>
-                        )}
                     </div>
                 </div>
             </div>

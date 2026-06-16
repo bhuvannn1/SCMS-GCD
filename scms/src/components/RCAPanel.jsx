@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { getFriendlyError } from './EmptyState';
 
 const API = process.env.REACT_APP_API_URL || "http://localhost:5000";
 
@@ -92,7 +93,7 @@ const RCAPanel = ({ orderId, delayHours = 0, onClose, mockRca }) => {
 
         <div style={{ padding: '22px' }}>
           {loading && <div style={{ color: '#64748b', fontWeight: 700 }}>Calculating route, velocity, weather, and delay impact...</div>}
-          {error && <div style={{ color: '#dc2626', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '12px' }}>{error}</div>}
+          {error && <div style={{ color: '#dc2626', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '12px' }}>{getFriendlyError(error)}</div>}
 
           {!loading && !error && rca && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>

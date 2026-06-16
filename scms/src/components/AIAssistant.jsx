@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { detectIntent } from '../hooks/useAIIntent';
 import supabase from '../config/SupabaseClient';
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { getFriendlyError } from './EmptyState';
 
 const RobotIcon = ({ size = 24 }) => (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -620,7 +621,7 @@ SCMS App Usage Guidebook:
 
         } catch (error) {
             console.error("AI Assistant Error:", error);
-            const errorReply = "AI error: " + error.message;
+            const errorReply = getFriendlyError(error.message) || "I encountered an issue while processing your request. Please try again in a moment.";
             setMessages(prev => [...prev, {
                 role: 'ai',
                 text: errorReply,

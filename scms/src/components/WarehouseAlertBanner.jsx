@@ -54,7 +54,7 @@ const WarehouseAlertBanner = () => {
     };
 
     return (
-        <div style={{
+        <div className="warehouse-alert-banner-container" style={{
             position: 'fixed',
             top: '11px',
             right: '20px',
